@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="MUNPL GPS Transmitter — Real-time vehicle position transmitter for fleet monitoring.">
+  <meta name="theme-color" content="#0b0f19">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>MUNPL Vehicle Tracker</title>
+  <script>
+    // Dynamically load Socket.IO client script to support both local dev and production/offline mode
+    const backendHost = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      ? (window.location.port === '5173' || window.location.port === '8080' ? 'http://localhost:3000' : '')
+      : '';
+    const socketScript = document.createElement('script');
+    socketScript.src = backendHost + '/socket.io/socket.io.js';
+    window.socketScript = socketScript;
+    document.head.appendChild(socketScript);
+  </script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    /* ── Override body overflow for tracker page (mobile scroll) ── */
+    html, body { overflow: auto !important; height: auto !important; }
+
+    /* ── Tracker-only extras ── */
+    .tx-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      background: rgba(59,130,246,0.12);
+      border: 1px solid rgba(59,130,246,0.25);
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--color-accent);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.2px;
+    }
+    .tx-badge .tx-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--color-accent);
+    }
+    .tx-badge.transmitting .tx-dot { animation: pulse 1s infinite; }
+
+    .signal-bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 16px;
+    }
+    .signal-bar {
+      width: 4px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.15);
+      transition: background 0.3s ease;
+    }
+    .signal-bar.b1 { height: 4px;  }
+    .signal-bar.b2 { height: 7px;  }
+    .signal-bar.b3 { height: 10px; }
+    .signal-bar.b4 { height: 14px; }
+
+    .signal-bars.strength-0 .signal-bar                    { background: rgba(255,255,255,0.1); }
+    .signal-bars.strength-1 .signal-bar.b1                  { background: var(--color-danger); }
+    .signal-bars.strength-2 .signal-bar.b1,
+    .signal-bars.strength-2 .signal-bar.b2                  { background: var(--color-warning); }
+    .signal-bars.strength-3 .signal-bar.b1,
+    .signal-bars.strength-3 .signal-bar.b2,
+    .signal-bars.strength-3 .signal-bar.b3                  { background: var(--color-success); }
+    .signal-bars.strength-4 .signal-bar                    { background: var(--color-success); }
+
+    .device-id-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 8px;
+      font-size: 10px;
+      color: var(--text-muted);
+      font-family: 'Consolas', monospace;
+      letter-spacing: 0.3px;
+      margin-top: 4px;
+      word-break: break-all;
+    }
+    .device-id-pill i { flex-shrink: 0; color: var(--color-accent); }
+
+    .wakelock-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .wakelock-badge.active   { background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.25); color: var(--color-success); }
+    .wakelock-badge.inactive { background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.25); color: var(--color-warning); }
+
+    .tracker-map-mini {
+      width: 100%;
+      height: 120px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 10px;
+      border: 1px solid var(--border-glass);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 11px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .coord-dot {
+      position: absolute;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--color-accent);
+      box-shadow: 0 0 0 3px rgba(59,130,246,0.25);
+      animation: pulse 1.5s infinite;
+    }
+
+    .tracker-divider {
+      height: 1px;
+      background: var(--border-glass);
+      margin: 2px 0;
+    }
+
+    .accuracy-bar-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 2px;
+    }
+    .accuracy-bar {
+      flex: 1;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.07);
+      overflow: hidden;
+    }
+    .accuracy-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.6s ease, background 0.3s;
+      background: var(--color-success);
+    }
+
+    /* Stop button solid override */
+    #track-btn.stopping {
+      background: var(--color-danger) !important;
+      border: none !important;
+      color: #fff !important;
+      box-shadow: 0 4px 20px rgba(239,68,68,0.35) !important;
+    }
+    #track-btn.stopping:hover {
+      background: #dc2626 !important;
+    }
+
+    /* Connection pending state */
+    .status-pill.connecting {
+      background: rgba(245,158,11,0.12);
+      color: var(--color-warning);
+      border: 1px solid rgba(245,158,11,0.3);
+    }
+
+    /* Queued badge */
+    .queue-badge {
+      display: none;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(245,158,11,0.12);
+      border: 1px solid rgba(245,158,11,0.25);
+      color: var(--color-warning);
+    }
+    .queue-badge.visible { display: inline-flex; }
+
+    @media (max-height: 700px) {
+      .tracker-map-mini { height: 80px; }
+    }
+  </style>
+  <link rel="stylesheet" crossorigin href="/assets/style-6y3zocq3.css">
+</head>
+<body>
+  <div class="tracker-container">
+
+    <!-- Header -->
+    <div class="tracker-header">
+      <div class="tracker-logo">
+        <i data-lucide="navigation" style="width:26px;height:26px;"></i>
+      </div>
+      <h1>MUNPL Vehicle Tracker</h1>
+      <p>GPS Transmitter · Fleet Live Monitoring</p>
+    </div>
+
+    <div class="tracker-content">
+
+      <!-- Insecure Context Warning (shown dynamically) -->
+      <div id="secure-context-warning" class="glass-card" style="display:none; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.3); color:#f87171; flex-direction:column; gap:8px;">
+        <div style="font-weight:600; display:flex; align-items:center; gap:8px;">
+          <i data-lucide="alert-triangle" style="width:16px; height:16px; color:#ef4444; flex-shrink:0;"></i>
+          Insecure Connection (HTTP)
+        </div>
+        <p style="font-size:12px; line-height:1.5; margin:0;">
+          Browsers block GPS tracking on insecure (HTTP) URLs when accessed over a local IP. Please use HTTPS or simulation mode.
+        </p>
+        <button id="warning-help-btn" class="btn btn-secondary" style="font-size:11px; padding:6px 12px; width:100%; display:flex; align-items:center; justify-content:center; gap:6px; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.3); color:#f87171; cursor:pointer;">
+          <i data-lucide="help-circle" style="width:13px; height:13px;"></i> How to solve this
+        </button>
+      </div>
+
+      <!-- Setup Card -->
+      <div class="glass-card">
+        <div class="card-section-title">
+          <i data-lucide="settings" style="width:11px;height:11px;"></i>
+          Transmitter Setup
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          <label for="vehicle-id-input" class="tracker-label">Vehicle Name / ID</label>
+          <input type="text" id="vehicle-id-input" class="input-field"
+            placeholder="e.g. Dumper-Truck-01" value="Vehicle-Transmitter">
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span class="tracker-label" style="display:flex;align-items:center;gap:6px;">
+            <i data-lucide="cpu" style="width:14px;color:var(--color-accent);"></i>
+            GPS Simulation Mode
+          </span>
+          <label class="switch">
+            <input type="checkbox" id="sim-mode-toggle">
+            <span class="slider round"></span>
+          </label>
+        </div>
+
+        <!-- Persistent Device ID display -->
+        <div class="device-id-pill">
+          <i data-lucide="fingerprint" style="width:12px;height:12px;"></i>
+          <span>Device ID: <span id="device-id-display">generating...</span></span>
+        </div>
+      </div>
+
+      <!-- Status Card -->
+      <div class="glass-card">
+        <div class="status-pill-container">
+          <span class="tracker-label">Server Connection</span>
+          <span id="connection-status" class="status-pill connecting">
+            <span class="ping-dot"></span><span class="status-text">Connecting…</span>
+          </span>
+        </div>
+        <!-- Connected-to URL for diagnostics -->
+        <div style="font-size:10px;color:var(--text-muted);background:rgba(0,0,0,0.25);border-radius:6px;padding:5px 8px;font-family:monospace;word-break:break-all;margin-top:2px;" id="server-url-display">
+          Connecting to: <span id="server-url-text" style="color:var(--color-accent);"></span>
+        </div>
+        <div class="status-pill-container">
+          <span class="tracker-label">GPS Sensor</span>
+          <span id="gps-status" class="status-pill standby">
+            <span class="ping-dot"></span><span class="status-text">Idle</span>
+          </span>
+        </div>
+        <div class="status-pill-container">
+          <span class="tracker-label">Screen Wake Lock</span>
+          <span id="wakelock-badge" class="wakelock-badge inactive">
+            <i data-lucide="moon" style="width:11px;height:11px;"></i>
+            Not Held
+          </span>
+        </div>
+        <div class="tracker-divider"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span class="tracker-label">GPS Signal Strength</span>
+          <div id="signal-bars" class="signal-bars strength-0">
+            <div class="signal-bar b1"></div>
+            <div class="signal-bar b2"></div>
+            <div class="signal-bar b3"></div>
+            <div class="signal-bar b4"></div>
+          </div>
+        </div>
+        <!-- Queued location badge (shown when socket is offline) -->
+        <div class="status-pill-container" id="queue-row" style="display:none;">
+          <span class="tracker-label">Buffered Updates</span>
+          <span id="queue-badge" class="queue-badge visible">
+            <i data-lucide="database" style="width:10px;height:10px;"></i>
+            <span id="queue-count">0</span> queued
+          </span>
+        </div>
+      </div>
+
+      <!-- START / STOP Button -->
+      <button id="track-btn" class="btn btn-primary big-btn-tracker">
+        <i data-lucide="play" id="btn-icon"></i>
+        <span id="btn-text">Start Live Tracking</span>
+      </button>
+
+      <!-- Quick connection test -->
+      <button id="quick-test-btn" class="btn btn-secondary" style="width:100%;font-size:13px;padding:10px;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.3);color:#c084fc;">
+        <i data-lucide="zap" style="width:14px;height:14px;"></i>
+        Quick Test (Sim Mode — no GPS needed)
+      </button>
+
+      <!-- Telemetry Card -->
+      <div class="tracker-info-box">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div class="card-section-title" style="margin-bottom:0;">
+            <i data-lucide="zap" style="width:11px;height:11px;"></i>
+            Live Telemetry
+          </div>
+          <span id="tx-badge" class="tx-badge">
+            <span class="tx-dot"></span>
+            <span id="tx-count">0</span> packets sent
+          </span>
+        </div>
+
+        <!-- Mini position dot indicator -->
+        <div class="tracker-map-mini" id="mini-map">
+          <i data-lucide="map-pin" style="width:22px;height:22px;opacity:0.3;"></i>
+          <span style="margin-left:6px;opacity:0.5;">Awaiting GPS fix…</span>
+        </div>
+
+        <div class="tracker-stat-row">
+          <span class="tracker-label">Latitude</span>
+          <span id="lat-val" class="tracker-value">—</span>
+        </div>
+        <div class="tracker-stat-row">
+          <span class="tracker-label">Longitude</span>
+          <span id="lng-val" class="tracker-value">—</span>
+        </div>
+        <div class="tracker-stat-row">
+          <span class="tracker-label">Speed</span>
+          <span class="tracker-value">
+            <span id="speed-val" class="value-main">0.0</span>
+            <span class="value-unit">km/h</span>
+          </span>
+        </div>
+        <div class="tracker-stat-row">
+          <span class="tracker-label">GPS Accuracy</span>
+          <span class="tracker-value">
+            <span id="accuracy-val" class="value-main">—</span>
+            <span class="value-unit">m</span>
+          </span>
+        </div>
+
+        <!-- Accuracy visual bar -->
+        <div class="accuracy-bar-wrap">
+          <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;">Signal quality</span>
+          <div class="accuracy-bar">
+            <div id="accuracy-fill" class="accuracy-fill" style="width:0%;"></div>
+          </div>
+          <span id="accuracy-label" style="font-size:10px;color:var(--text-muted);min-width:28px;text-align:right;">—</span>
+        </div>
+
+        <div class="tracker-stat-row">
+          <span class="tracker-label">Heading</span>
+          <span id="heading-val" class="tracker-value">—</span>
+        </div>
+        <div class="tracker-stat-row">
+          <span class="tracker-label">Altitude</span>
+          <span class="tracker-value">
+            <span id="altitude-val" class="value-main">—</span>
+            <span class="value-unit">m</span>
+          </span>
+        </div>
+        <div class="tracker-stat-row">
+          <span class="tracker-label">Battery</span>
+          <span class="tracker-value" id="battery-val">Detecting…</span>
+        </div>
+        <div class="tracker-stat-row">
+          <span class="tracker-label">Last Transmitted</span>
+          <span class="tracker-value" id="last-tx-val">—</span>
+        </div>
+      </div>
+
+      <!-- Guide Card -->
+      <div class="glass-card" style="font-size:13px;color:var(--text-secondary);gap:8px;">
+        <div style="font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:6px;">
+          <i data-lucide="info" style="width:16px;color:var(--color-accent);"></i>
+          Transmission Guide
+        </div>
+        <p>1. Mount the phone on the vehicle dashboard for clear sky visibility to GPS satellites.</p>
+        <p>2. Keep this page <strong>active and screen on</strong>. Wake Lock is engaged automatically when tracking.</p>
+        <p>3. Ensure the phone has an <strong>internet connection</strong> (mobile data works fine).</p>
+        <p>4. Tap <em>Start Live Tracking</em> — your position will appear on the fleet dashboard within seconds.</p>
+        <p>5. If the server is temporarily unreachable, location updates are <strong>buffered</strong> and flushed automatically on reconnect.</p>
+      </div>
+
+    </div><!-- /tracker-content -->
+
+    <div class="tracker-footer">
+      NTPC-MUNPL GPS Fleet Tracker · Real-Time Engine
+    </div>
+  </div><!-- /tracker-container -->
+
+  <!-- Help Modal for Insecure Context -->
+  <div class="modal-overlay" id="help-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); align-items:center; justify-content:center; z-index:9999; padding:16px; box-sizing:border-box;">
+    <div class="modal" style="background:#0b0f19; border:1px solid var(--border-glass); border-radius:12px; padding:20px; max-width:450px; width:100%; box-sizing:border-box; color:var(--text-primary); position:relative; display:flex; flex-direction:column; gap:14px;">
+      <div class="modal-header">
+        <h2 style="font-size:18px; margin:0 0 6px 0; color:#ef4444; display:flex; align-items:center; gap:8px;">
+          <i data-lucide="alert-triangle" style="width:20px; height:20px;"></i> GPS Access Blocked
+        </h2>
+        <p style="font-size:13px; color:var(--text-secondary); margin:0; line-height:1.4;">Modern browsers require a secure connection (HTTPS or localhost) to access device location.</p>
+      </div>
+      
+      <div style="display:flex; flex-direction:column; gap:12px; font-size:13px; line-height:1.5; color:var(--text-secondary); max-height:300px; overflow-y:auto; padding-right:6px;">
+        <div style="background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.06);">
+          <strong style="color:var(--text-primary); display:block; margin-bottom:4px;">Option 1: Use Simulation Mode (For Testing)</strong>
+          Enable the <strong>GPS Simulation Mode</strong> switch on the setup card or tap the <strong>Quick Test</strong> button. This works instantly on HTTP without physical GPS access.
+        </div>
+        <div style="background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.06);">
+          <strong style="color:var(--text-primary); display:block; margin-bottom:4px;">Option 2: Bypass Browser Check (Android Chrome)</strong>
+          On Chrome on the device, navigate to:
+          <code style="display:block; background:#000; padding:6px; border-radius:4px; margin-top:4px; font-size:11px; color:var(--color-accent); font-family:monospace; word-break:break-all;">chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>
+          Enable the flag, add your tracker URL (<span style="color:#ffffff;" id="modal-server-url-placeholder"></span>), and relaunch Chrome.
+        </div>
+      </div>
+      
+      <button id="close-help-btn" class="btn btn-primary" style="width:100%;">Close</button>
+    </div>
+  </div>
+
+<script>
+  // ── Backend Host Resolution (Supports local dev & production) ───────────────
+  const BACKEND_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? (window.location.port === '5173' || window.location.port === '8080' ? 'http://localhost:3000' : '')
+    : '';
+
+  // ── Init Lucide Icons ────────────────────────────────────────────────────────
+  lucide.createIcons();
+
+  // ── Persistent Device UUID ───────────────────────────────────────────────────
+  function getOrCreateDeviceId() {
+    let id = localStorage.getItem('munpl_device_id');
+    if (!id) {
+      id = 'DEV-' + Date.now().toString(36).toUpperCase() + '-' +
+           Math.random().toString(36).substring(2, 8).toUpperCase();
+      localStorage.setItem('munpl_device_id', id);
+    }
+    return id;
+  }
+  const DEVICE_ID = getOrCreateDeviceId();
+  document.getElementById('device-id-display').textContent = DEVICE_ID;
+
+  // Persist vehicle name
+  const savedName = localStorage.getItem('munpl_vehicle_name');
+  const vehicleIdInput = document.getElementById('vehicle-id-input');
+  if (savedName) vehicleIdInput.value = savedName;
+  vehicleIdInput.addEventListener('change', () => {
+    localStorage.setItem('munpl_vehicle_name', vehicleIdInput.value.trim() || 'Vehicle-Transmitter');
+  });
+
+  // ── State ────────────────────────────────────────────────────────────────────
+  let socket        = null;
+  let watchId       = null;
+  let simInterval   = null;
+  let simStep       = 0;
+  let isTracking    = false;
+  let batteryLevel  = null;
+  let isCharging    = false;
+  let previousPosition = null;
+  let txCount       = 0;
+  let wakeLock      = null;
+
+  // Offline emission queue — flushed when socket reconnects
+  let emitQueue = [];
+
+  // ── DOM refs ─────────────────────────────────────────────────────────────────
+  const trackBtn        = document.getElementById('track-btn');
+  const btnIcon         = document.getElementById('btn-icon');
+  const btnText         = document.getElementById('btn-text');
+  const connStatus      = document.getElementById('connection-status');
+  const gpsStatus       = document.getElementById('gps-status');
+  const latVal          = document.getElementById('lat-val');
+  const lngVal          = document.getElementById('lng-val');
+  const speedVal        = document.getElementById('speed-val');
+  const accuracyVal     = document.getElementById('accuracy-val');
+  const headingVal      = document.getElementById('heading-val');
+  const altitudeVal     = document.getElementById('altitude-val');
+  const batteryVal      = document.getElementById('battery-val');
+  const lastTxVal       = document.getElementById('last-tx-val');
+  const txBadge         = document.getElementById('tx-badge');
+  const txCountEl       = document.getElementById('tx-count');
+  const simModeToggle   = document.getElementById('sim-mode-toggle');
+  const signalBars      = document.getElementById('signal-bars');
+  const wakeLockBadge   = document.getElementById('wakelock-badge');
+  const miniMap         = document.getElementById('mini-map');
+  const accuracyFill    = document.getElementById('accuracy-fill');
+  const accuracyLabel   = document.getElementById('accuracy-label');
+  const queueRow        = document.getElementById('queue-row');
+  const queueCountEl    = document.getElementById('queue-count');
+
+  // ── Simulated plant route (NTPC-MUNPL, Meja, UP) ────────────────────────────
+  const mockTrackerCoordinates = [
+    { lat: 25.1453, lng: 81.9435, speed: 15, heading: 0,   accuracy: 5.2, altitude: 98.1 },
+    { lat: 25.1461, lng: 81.9428, speed: 22, heading: 345, accuracy: 4.8, altitude: 98.2 },
+    { lat: 25.1470, lng: 81.9432, speed: 30, heading: 18,  accuracy: 6.1, altitude: 98.3 },
+    { lat: 25.1478, lng: 81.9443, speed: 35, heading: 55,  accuracy: 5.5, altitude: 98.5 },
+    { lat: 25.1481, lng: 81.9456, speed: 32, heading: 88,  accuracy: 4.9, altitude: 98.6 },
+    { lat: 25.1476, lng: 81.9467, speed: 28, heading: 115, accuracy: 5.0, altitude: 98.7 },
+    { lat: 25.1465, lng: 81.9476, speed: 22, heading: 143, accuracy: 6.4, altitude: 98.8 },
+    { lat: 25.1453, lng: 81.9479, speed: 15, heading: 175, accuracy: 7.2, altitude: 98.9 },
+    { lat: 25.1441, lng: 81.9474, speed: 24, heading: 202, accuracy: 5.8, altitude: 98.8 },
+    { lat: 25.1433, lng: 81.9461, speed: 30, heading: 238, accuracy: 5.1, altitude: 98.6 },
+    { lat: 25.1430, lng: 81.9447, speed: 33, heading: 266, accuracy: 4.6, altitude: 98.4 },
+    { lat: 25.1435, lng: 81.9434, speed: 28, heading: 302, accuracy: 5.3, altitude: 98.3 },
+    { lat: 25.1444, lng: 81.9427, speed: 18, heading: 330, accuracy: 5.9, altitude: 98.2 }
+  ];
+
+  // ── Battery ──────────────────────────────────────────────────────────────────
+  if (navigator.getBattery) {
+    navigator.getBattery().then(batt => {
+      updateBatteryUI(batt);
+      batt.addEventListener('levelchange',   () => updateBatteryUI(batt));
+      batt.addEventListener('chargingchange', () => updateBatteryUI(batt));
+    }).catch(() => { batteryVal.textContent = 'Not Available'; });
+  } else {
+    batteryVal.textContent = 'Not Supported';
+  }
+
+  function updateBatteryUI(batt) {
+    batteryLevel = Math.round(batt.level * 100);
+    isCharging   = batt.charging;
+    const icon = isCharging ? '⚡' : (batteryLevel > 20 ? '🔋' : '🪫');
+    batteryVal.innerHTML = `${icon} ${batteryLevel}%${isCharging ? ' <span style="color:var(--color-success);font-size:11px;">(Charging)</span>' : ''}`;
+  }
+
+  // ── Screen Wake Lock ─────────────────────────────────────────────────────────
+  async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      setWakeLockBadge(true);
+      wakeLock.addEventListener('release', () => setWakeLockBadge(false));
+    } catch (err) {
+      console.warn('Wake lock failed:', err);
+      setWakeLockBadge(false);
+    }
+  }
+
+  function releaseWakeLock() {
+    if (wakeLock) { wakeLock.release(); wakeLock = null; }
+    setWakeLockBadge(false);
+  }
+
+  function setWakeLockBadge(active) {
+    wakeLockBadge.className = `wakelock-badge ${active ? 'active' : 'inactive'}`;
+    wakeLockBadge.innerHTML = active
+      ? '<i data-lucide="sun" style="width:11px;height:11px;"></i> Active'
+      : '<i data-lucide="moon" style="width:11px;height:11px;"></i> Not Held';
+    lucide.createIcons();
+  }
+
+  // Re-acquire wake lock if page becomes visible again
+  document.addEventListener('visibilitychange', async () => {
+    if (wakeLock !== null && document.visibilityState === 'visible' && isTracking) {
+      await requestWakeLock();
+    }
+  });
+
+  // ── GPS Signal Strength from Accuracy ────────────────────────────────────────
+  function updateSignalStrength(accuracyM) {
+    let strength = 0;
+    if      (accuracyM <= 5)  strength = 4;
+    else if (accuracyM <= 10) strength = 3;
+    else if (accuracyM <= 25) strength = 2;
+    else if (accuracyM <= 50) strength = 1;
+    signalBars.className = `signal-bars strength-${strength}`;
+
+    const pct = Math.max(0, Math.min(100, Math.round((1 - (accuracyM - 3) / 97) * 100)));
+    accuracyFill.style.width = pct + '%';
+    accuracyFill.style.background = strength >= 3 ? 'var(--color-success)' : strength === 2 ? 'var(--color-warning)' : 'var(--color-danger)';
+    const labels = ['—', 'Poor', 'Fair', 'Good', 'Excellent'];
+    accuracyLabel.textContent = labels[strength] || '—';
+  }
+
+  // ── Mini position indicator ───────────────────────────────────────────────────
+  function updateMiniMap(lat, lng) {
+    miniMap.innerHTML = `
+      <div style="text-align:center;">
+        <div class="coord-dot"></div>
+        <div style="margin-top:14px;font-size:10px;color:var(--color-accent);font-family:monospace;line-height:1.6;">
+          ${lat.toFixed(5)}, ${lng.toFixed(5)}
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px;">Transmitting live position</div>
+      </div>`;
+  }
+
+  // ── Last TX time ─────────────────────────────────────────────────────────────
+  function touchTxTime() {
+    txCount++;
+    txCountEl.textContent = txCount;
+    txBadge.classList.add('transmitting');
+    lastTxVal.textContent = new Date().toTimeString().split(' ')[0];
+    clearTimeout(txBadge._dimTimer);
+    txBadge._dimTimer = setTimeout(() => txBadge.classList.remove('transmitting'), 800);
+  }
+
+  // ── Queue management ─────────────────────────────────────────────────────────
+  function updateQueueUI() {
+    if (emitQueue.length > 0) {
+      queueRow.style.display = 'flex';
+      queueCountEl.textContent = emitQueue.length;
+    } else {
+      queueRow.style.display = 'none';
+    }
+  }
+
+  function flushQueue() {
+    if (!socket?.connected || emitQueue.length === 0) return;
+    const toFlush = [...emitQueue];
+    emitQueue = [];
+    updateQueueUI();
+    toFlush.forEach(payload => {
+      socket.emit('location_update', payload);
+    });
+    if (toFlush.length > 0) touchTxTime();
+    console.log(`[Tracker] Flushed ${toFlush.length} queued location(s).`);
+  }
+
+  // ── Socket ───────────────────────────────────────────────────────────────────
+  function setConnStatus(state, text) {
+    connStatus.className = `status-pill ${state}`;
+    connStatus.querySelector('.status-text').textContent = text;
+  }
+
+  function connectSocket() {
+    const opts = {
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 8000,
+      timeout: 20000
+    };
+
+    socket = io(BACKEND_URL || undefined, opts);
+
+    socket.on('connect', () => {
+      setConnStatus('online', 'Connected');
+      // Register if already tracking
+      if (isTracking) registerTracker();
+      // Flush any queued location packets
+      flushQueue();
+    });
+
+    socket.on('disconnect', () => {
+      setConnStatus('offline', 'Disconnected');
+    });
+
+    socket.on('reconnecting', (attempt) => {
+      setConnStatus('connecting', `Reconnecting… (${attempt})`);
+    });
+
+    socket.on('connect_error', () => {
+      setConnStatus('offline', 'Server Unreachable');
+    });
+  }
+
+  function getOSName() {
+    const ua = navigator.userAgent;
+    if (/Android/.test(ua))          return 'Android';
+    if (/iPhone|iPad|iPod/.test(ua)) return 'iOS';
+    if (/Windows/.test(ua))          return 'Windows';
+    if (/Mac/.test(ua))              return 'macOS';
+    if (/Linux/.test(ua))            return 'Linux';
+    return 'Unknown';
+  }
+
+  function registerTracker() {
+    if (!socket?.connected) return;
+    const name = vehicleIdInput.value.trim() || 'Vehicle-Transmitter';
+    socket.emit('register_tracker', {
+      id: DEVICE_ID,
+      device: name,
+      os: getOSName(),
+      battery: batteryLevel,
+      isCharging
+    });
+  }
+
+  // Emit with queue fallback — never drops a packet
+  function emitLocation(payload) {
+    if (socket?.connected) {
+      socket.emit('location_update', payload);
+      touchTxTime();
+    } else {
+      // Buffer up to 200 packets offline; drop oldest if over limit
+      emitQueue.push(payload);
+      if (emitQueue.length > 200) emitQueue.shift();
+      updateQueueUI();
+    }
+  }
+
+  // ── Haversine (for speed calc fallback) ──────────────────────────────────────
+  function distanceKm(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  // ── Start Tracking ────────────────────────────────────────────────────────────
+  function startTracking() {
+    isTracking = true;
+    registerTracker();
+    requestWakeLock();
+
+    gpsStatus.className = 'status-pill standby';
+    gpsStatus.querySelector('.status-text').textContent = 'Acquiring…';
+
+    vehicleIdInput.disabled = true;
+    simModeToggle.disabled  = true;
+    txCount = 0;
+    txCountEl.textContent = '0';
+    emitQueue = [];
+    updateQueueUI();
+
+    const customName = vehicleIdInput.value.trim() || 'Vehicle-Transmitter';
+
+    if (simModeToggle.checked) {
+      // ── Simulation Mode ──
+      gpsStatus.className = 'status-pill online';
+      gpsStatus.querySelector('.status-text').textContent = 'GPS Sim Active';
+      simStep = 0;
+
+      const runSimStep = () => {
+        const pt = mockTrackerCoordinates[simStep];
+        const lat    = pt.lat    + (Math.random() - 0.5) * 0.0001;
+        const lng    = pt.lng    + (Math.random() - 0.5) * 0.0001;
+        const speed  = pt.speed  + (Math.random() - 0.5) * 2;
+        const hdg    = (pt.heading + Math.floor(Math.random() * 10 - 5) + 360) % 360;
+        const acc    = pt.accuracy;
+
+        latVal.textContent      = lat.toFixed(6);
+        lngVal.textContent      = lng.toFixed(6);
+        speedVal.textContent    = speed.toFixed(1);
+        accuracyVal.textContent = acc.toFixed(1);
+        headingVal.textContent  = `${Math.round(hdg)}°`;
+        altitudeVal.textContent = pt.altitude.toFixed(1);
+        updateSignalStrength(acc);
+        updateMiniMap(lat, lng);
+
+        emitLocation({
+          lat, lng,
+          accuracy: acc,
+          speed: parseFloat(speed.toFixed(1)),
+          heading: hdg,
+          altitude: pt.altitude,
+          timestamp: Date.now(),
+          deviceInfo: {
+            id: DEVICE_ID,
+            device: customName,
+            os: getOSName() + ' (Simulated)',
+            battery: batteryLevel,
+            isCharging
+          }
+        });
+
+        simStep = (simStep + 1) % mockTrackerCoordinates.length;
+      };
+
+      runSimStep();
+      simInterval = setInterval(runSimStep, 2000);
+
+    } else {
+      // ── Real GPS Mode ──
+      if (!navigator.geolocation) {
+        alert('Geolocation is not supported by your browser.');
+        stopTracking();
+        return;
+      }
+
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          gpsStatus.className = 'status-pill online';
+          gpsStatus.querySelector('.status-text').textContent = 'Active GPS';
+
+          const c = pos.coords;
+          let speedKmh = 0;
+          if (c.speed !== null && c.speed !== undefined) {
+            speedKmh = c.speed * 3.6;
+          } else if (previousPosition) {
+            const dist = distanceKm(
+              previousPosition.coords.latitude,
+              previousPosition.coords.longitude,
+              c.latitude, c.longitude
+            );
+            const hrs = (pos.timestamp - previousPosition.timestamp) / 3600000;
+            if (hrs > 0 && dist > 0.001) speedKmh = dist / hrs;
+          }
+          if (speedKmh < 1.0) speedKmh = 0;
+
+          latVal.textContent      = c.latitude.toFixed(6);
+          lngVal.textContent      = c.longitude.toFixed(6);
+          speedVal.textContent    = speedKmh.toFixed(1);
+          accuracyVal.textContent = c.accuracy.toFixed(1);
+          headingVal.textContent  = (c.heading !== null && c.heading !== undefined)
+            ? `${Math.round(c.heading)}°` : 'N/A';
+          altitudeVal.textContent = (c.altitude !== null && c.altitude !== undefined)
+            ? c.altitude.toFixed(1) : 'N/A';
+
+          updateSignalStrength(c.accuracy);
+          updateMiniMap(c.latitude, c.longitude);
+
+          emitLocation({
+            lat: c.latitude,
+            lng: c.longitude,
+            accuracy: c.accuracy,
+            speed: parseFloat(speedKmh.toFixed(1)),
+            heading: c.heading,
+            altitude: c.altitude,
+            timestamp: pos.timestamp,
+            deviceInfo: {
+              id: DEVICE_ID,
+              device: customName,
+              os: getOSName(),
+              battery: batteryLevel,
+              isCharging
+            }
+          });
+
+          previousPosition = pos;
+        },
+        (err) => {
+          gpsStatus.className = 'status-pill offline';
+          let msg = 'GPS Error';
+          if (err.code === err.PERMISSION_DENIED) {
+            msg = 'Permission Denied';
+            if (!window.isSecureContext) {
+              const modal = document.getElementById('help-modal');
+              if (modal) modal.style.display = 'flex';
+            } else {
+              alert('Enable Location access in browser settings to start tracking.');
+            }
+            stopTracking();
+          } else if (err.code === err.POSITION_UNAVAILABLE) {
+            msg = 'No Fix';
+          } else if (err.code === err.TIMEOUT) {
+            msg = 'Timeout — retrying';
+          }
+          gpsStatus.querySelector('.status-text').textContent = msg;
+          updateSignalStrength(999);
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    }
+
+    // Button — use .stopping class for a solid red, no class conflicts
+    trackBtn.className = 'btn big-btn-tracker stopping';
+    btnIcon.setAttribute('data-lucide', 'square');
+    btnText.textContent = 'Stop Tracking';
+    lucide.createIcons();
+  }
+
+  // ── Stop Tracking ─────────────────────────────────────────────────────────────
+  function stopTracking() {
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    }
+    if (simInterval !== null) {
+      clearInterval(simInterval);
+      simInterval = null;
+    }
+    isTracking = false;
+    previousPosition = null;
+    releaseWakeLock();
+
+    gpsStatus.className = 'status-pill standby';
+    gpsStatus.querySelector('.status-text').textContent = 'Idle';
+
+    vehicleIdInput.disabled = false;
+    simModeToggle.disabled  = false;
+
+    // Reset button back cleanly
+    trackBtn.className = 'btn btn-primary big-btn-tracker';
+    btnIcon.setAttribute('data-lucide', 'play');
+    btnText.textContent = 'Start Live Tracking';
+    lucide.createIcons();
+
+    // Reset telemetry display
+    latVal.textContent      = '—';
+    lngVal.textContent      = '—';
+    speedVal.textContent    = '0.0';
+    accuracyVal.textContent = '—';
+    headingVal.textContent  = '—';
+    altitudeVal.textContent = '—';
+    lastTxVal.textContent   = '—';
+    updateSignalStrength(999);
+
+    // Clear queue display
+    emitQueue = [];
+    updateQueueUI();
+
+    miniMap.innerHTML = `
+      <i data-lucide="map-pin" style="width:22px;height:22px;opacity:0.3;"></i>
+      <span style="margin-left:6px;opacity:0.5;">Tracking stopped</span>`;
+    lucide.createIcons();
+  }
+
+  // ── Button Listener ───────────────────────────────────────────────────────────
+  trackBtn.addEventListener('click', () => {
+    if (isTracking) stopTracking();
+    else            startTracking();
+  });
+
+  // ── Quick Test Button — enables sim mode + starts immediately ─────────────────
+  document.getElementById('quick-test-btn').addEventListener('click', () => {
+    if (isTracking) { stopTracking(); return; }
+    simModeToggle.checked = true;
+    startTracking();
+  });
+
+  // ── Show which server URL this page is connected to ───────────────────────────
+  document.getElementById('server-url-text').textContent = BACKEND_URL || window.location.origin;
+
+  // ── Secure Context Detection ──────────────────────────────────────────────────
+  const isSecure = window.isSecureContext;
+  const warningBanner = document.getElementById('secure-context-warning');
+  const helpModal = document.getElementById('help-modal');
+  const helpBtn = document.getElementById('warning-help-btn');
+  const closeHelpBtn = document.getElementById('close-help-btn');
+  const modalUrlPlaceholder = document.getElementById('modal-server-url-placeholder');
+
+  if (modalUrlPlaceholder) {
+    modalUrlPlaceholder.textContent = (BACKEND_URL || window.location.origin) + "/tracker.html";
+  }
+
+  if (!isSecure) {
+    if (warningBanner) warningBanner.style.display = 'flex';
+  }
+
+  if (helpBtn && helpModal) {
+    helpBtn.addEventListener('click', () => {
+      helpModal.style.display = 'flex';
+    });
+  }
+
+  if (closeHelpBtn && helpModal) {
+    closeHelpBtn.addEventListener('click', () => {
+      helpModal.style.display = 'none';
+    });
+  }
+
+  // ── Init ─────────────────────────────────────────────────────────────────────
+  if (typeof io !== 'undefined') {
+    connectSocket();
+  } else if (window.socketScript) {
+    window.socketScript.onload = connectSocket;
+  }
+</script>
+</body>
+</html>

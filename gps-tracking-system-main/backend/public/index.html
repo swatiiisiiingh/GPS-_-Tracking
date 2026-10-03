@@ -1,0 +1,1858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MUNPL GPS — Fleet Live Tracking Dashboard</title>
+  <meta name="description" content="Real-time GPS Fleet Monitoring and Route Management System for NTPC-MUNPL Meja Urja Nigam Pvt. Ltd.">
+  <script>
+    // Dynamically load Socket.IO client script to support both local dev and production/offline mode
+    const backendHost = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      ? (window.location.port === '5173' || window.location.port === '8080' ? 'http://localhost:3000' : '')
+      : '';
+    const socketScript = document.createElement('script');
+    socketScript.src = backendHost + '/socket.io/socket.io.js';
+    window.socketScript = socketScript;
+    document.head.appendChild(socketScript);
+  </script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" crossorigin href="/assets/style-6y3zocq3.css">
+</head>
+<body>
+
+<div class="app-wrapper">
+
+  <!-- ═══ TOP HEADER BAR ════════════════════════════════════════════════════ -->
+  <div class="top-header">
+    <!-- Logo -->
+    <div class="header-logo">
+      <div class="header-logo-icon">
+        <i data-lucide="map-pin" style="width:16px;height:16px;"></i>
+      </div>
+      <div class="header-logo-text">
+        <strong>MUNPL-GPS</strong>
+        <span>Meja Urja Nigam Pvt. Ltd.</span>
+      </div>
+    </div>
+
+    <!-- Live clock -->
+    <div class="header-clock">
+      <div class="header-clock-time" id="header-clock-time">--:--:--</div>
+      <div class="header-clock-date" id="header-clock-date">---</div>
+    </div>
+
+    <!-- Fleet summary counters -->
+    <div class="header-right">
+      <div class="fleet-summary">
+        <div class="fleet-counter total"  title="Total fleet">
+          <div class="fleet-counter-dot"></div>
+          <span id="hdr-total">0</span> Total
+        </div>
+        <div class="fleet-counter active" title="Moving vehicles">
+          <div class="fleet-counter-dot"></div>
+          <span id="hdr-active">0</span> Moving
+        </div>
+        <div class="fleet-counter idle"   title="Idle vehicles">
+          <div class="fleet-counter-dot"></div>
+          <span id="hdr-idle">0</span> Idle
+        </div>
+        <div class="fleet-counter offline" title="Offline vehicles">
+          <div class="fleet-counter-dot"></div>
+          <span id="hdr-offline">0</span> Offline
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+
+  <!-- ═══ MAIN CONTENT ══════════════════════════════════════════════════════ -->
+  <div class="dashboard-container">
+
+    <!-- ── SIDEBAR ──────────────────────────────────────────────────────── -->
+    <div class="sidebar">
+
+      <div class="sidebar-header">
+        <div class="sidebar-header-inner">
+          <span class="sidebar-title">Control Panel</span>
+          <span id="socket-status" class="status-pill offline">
+            <span class="ping-dot"></span><span class="status-text">Connecting</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="sidebar-content">
+
+        <!-- ACTIVE FLEET LIST -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="truck" style="width:11px;height:11px;"></i>
+            Active Fleet (<span id="fleet-count">0</span>)
+          </div>
+          <div class="glass-card" style="padding: 8px; max-height: 175px; overflow-y: auto; gap: 0;" id="fleet-list-container">
+            <div style="font-size:11px;color:var(--text-muted);text-align:center;padding:14px 0;">
+              No active vehicle transmitters
+            </div>
+          </div>
+        </div>
+
+        <!-- TRACKER STATUS -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="activity" style="width:11px;height:11px;"></i>
+            Vehicle Status
+          </div>
+          <div class="glass-card">
+            <div class="status-pill-container">
+              <span class="stat-label">Transmitter Signal</span>
+              <span id="tracker-status" class="status-pill offline">
+                <span class="ping-dot"></span><span class="status-text">No Signal</span>
+              </span>
+            </div>
+            <div class="status-pill-container">
+              <span class="stat-label">Geofence Boundary</span>
+              <span id="diag-geofence" class="stat-value" style="font-size:13px;font-weight:600;">—</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- LIVE TELEMETRY HUD -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="zap" style="width:11px;height:11px;"></i>
+            Live Telemetry
+          </div>
+          <div class="stats-grid">
+            <div class="stat-item">
+              <span class="stat-label"><i data-lucide="gauge" style="width:11px;vertical-align:middle;margin-right:3px;"></i>Speed</span>
+              <div class="stat-value"><span id="hud-speed">0.0</span> <span class="stat-unit">km/h</span></div>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label"><i data-lucide="milestone" style="width:11px;vertical-align:middle;margin-right:3px;"></i>Odometer</span>
+              <div class="stat-value"><span id="hud-distance">0.00</span> <span class="stat-unit">km</span></div>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label"><i data-lucide="compass" style="width:11px;vertical-align:middle;margin-right:3px;"></i>Heading</span>
+              <div class="stat-value" id="hud-heading" style="font-size:13px;">N/A</div>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label"><i data-lucide="crosshair" style="width:11px;vertical-align:middle;margin-right:3px;"></i>Accuracy</span>
+              <div class="stat-value"><span id="hud-accuracy">—</span> <span class="stat-unit">m</span></div>
+            </div>
+          </div>
+          <!-- Speed sparkline -->
+          <div class="sparkline-wrapper">
+            <div class="sparkline-header">
+              <span class="sparkline-title">Speed Trend</span>
+              <span id="sparkline-peak" class="sparkline-peak">0 km/h peak</span>
+            </div>
+            <canvas id="speed-sparkline" width="300" height="40"></canvas>
+          </div>
+        </div>
+
+        <!-- TRIP STATISTICS -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="bar-chart-2" style="width:11px;height:11px;"></i>
+            Trip Statistics
+          </div>
+          <div class="trip-stats-grid">
+            <div class="trip-stat-item">
+              <div class="trip-stat-label">Avg Speed</div>
+              <div class="trip-stat-value"><span id="trip-avg-speed">—</span> <span class="trip-stat-unit">km/h</span></div>
+            </div>
+            <div class="trip-stat-item">
+              <div class="trip-stat-label">Max Speed</div>
+              <div class="trip-stat-value"><span id="trip-max-speed">—</span> <span class="trip-stat-unit">km/h</span></div>
+            </div>
+            <div class="trip-stat-item">
+              <div class="trip-stat-label">Duration</div>
+              <div class="trip-stat-value" id="trip-duration" style="font-size:14px;">—</div>
+            </div>
+            <div class="trip-stat-item">
+              <div class="trip-stat-label">Waypoints</div>
+              <div class="trip-stat-value" id="trip-waypoints">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- DEVICE DIAGNOSTICS -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="cpu" style="width:11px;height:11px;"></i>
+            Device Diagnostics
+          </div>
+          <div class="glass-card">
+            <div class="status-pill-container">
+              <span class="stat-label">Device / OS</span>
+              <span id="diag-os" class="stat-value" style="font-size:12px;">—</span>
+            </div>
+            <div class="status-pill-container">
+              <span class="stat-label">Battery Level</span>
+              <span id="diag-battery" class="stat-value" style="font-size:12px;">—</span>
+            </div>
+            <div class="status-pill-container">
+              <span class="stat-label">Last Ping</span>
+              <span id="diag-ping" class="stat-value" style="font-size:12px;">—</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- TRIP HISTORY -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="history" style="width:11px;height:11px;"></i>
+            Trip History
+          </div>
+          <div class="glass-card" style="gap:8px;">
+            <div style="font-size:11px;color:var(--text-secondary);line-height:1.5;">Select a vehicle and date range to view its historical route on the map.</div>
+
+            <div>
+              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:4px;display:block;">Vehicle</label>
+              <select id="hist-vehicle-select" class="input-field" style="font-size:12px;padding:6px 8px;width:100%;">
+                <option value="">Select a vehicle...</option>
+              </select>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;">
+              <button onclick="setHistPreset('today')"     class="btn btn-secondary" style="padding:4px 0;font-size:10px;">Today</button>
+              <button onclick="setHistPreset('yesterday')" class="btn btn-secondary" style="padding:4px 0;font-size:10px;">Yest.</button>
+              <button onclick="setHistPreset('7d')"        class="btn btn-secondary" style="padding:4px 0;font-size:10px;">7 Days</button>
+              <button onclick="setHistPreset('30d')"       class="btn btn-secondary" style="padding:4px 0;font-size:10px;">30 Days</button>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+              <div>
+                <label style="font-size:10px;color:var(--text-muted);">From</label>
+                <input type="date" id="hist-from-date" class="input-field" style="font-size:11px;padding:5px 6px;width:100%;box-sizing:border-box;">
+              </div>
+              <div>
+                <label style="font-size:10px;color:var(--text-muted);">To</label>
+                <input type="date" id="hist-to-date" class="input-field" style="font-size:11px;padding:5px 6px;width:100%;box-sizing:border-box;">
+              </div>
+            </div>
+
+            <button id="load-history-btn" class="btn btn-primary" style="background:linear-gradient(135deg,#f59e0b,#d97706);border:none;">
+              <i data-lucide="route"></i> Load Route
+            </button>
+
+            <!-- Stats shown after loading -->
+            <div id="hist-stats" style="display:none;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2);border-radius:10px;padding:10px;">
+              <div style="font-size:10px;font-weight:700;color:#f59e0b;margin-bottom:8px;display:flex;align-items:center;gap:4px;">
+                <i data-lucide="bar-chart-2" style="width:10px;height:10px;"></i> HISTORICAL ROUTE STATS
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px;">
+                <div><div style="color:var(--text-muted);margin-bottom:2px;">Distance</div><strong id="hist-stat-dist">—</strong></div>
+                <div><div style="color:var(--text-muted);margin-bottom:2px;">Max Speed</div><strong id="hist-stat-speed">—</strong></div>
+                <div><div style="color:var(--text-muted);margin-bottom:2px;">Duration</div><strong id="hist-stat-dur">—</strong></div>
+                <div><div style="color:var(--text-muted);margin-bottom:2px;">Waypoints</div><strong id="hist-stat-wpts">—</strong></div>
+              </div>
+            </div>
+
+            <!-- Export buttons -->
+            <div id="hist-actions" style="display:none;grid-template-columns:1fr 1fr;gap:6px;">
+              <button id="hist-export-geojson" class="btn btn-secondary" style="font-size:11px;padding:7px;">
+                <i data-lucide="download"></i> GeoJSON
+              </button>
+              <button id="hist-export-csv" class="btn btn-secondary" style="font-size:11px;padding:7px;">
+                <i data-lucide="file-text"></i> CSV
+              </button>
+            </div>
+
+            <!-- Detailed Logs Table (Expandable) -->
+            <div id="hist-table-container" style="display:none; margin-top:8px;">
+              <button id="toggle-hist-table-btn" class="btn btn-secondary" style="width:100%; font-size:11px; padding:6px; display:flex; align-items:center; justify-content:center; gap:4px;">
+                <i data-lucide="table" style="width:12px; height:12px;"></i> Show Detailed Logs
+              </button>
+              <div id="hist-table-wrapper" style="display:none; max-height:220px; overflow-y:auto; margin-top:8px; border:1px solid rgba(255,255,255,0.08); border-radius:8px; background:rgba(0,0,0,0.25);">
+                <table style="width:100%; border-collapse:collapse; font-size:10px; text-align:left; color:var(--text-secondary);">
+                  <thead>
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.1); background:rgba(15,23,42,0.8); position:sticky; top:0; z-index:1;">
+                      <th style="padding:6px 8px; font-weight:600;">Time</th>
+                      <th style="padding:6px 8px; font-weight:600;">Coordinates</th>
+                      <th style="padding:6px 8px; font-weight:600;">Nearest Landmark</th>
+                      <th style="padding:6px 8px; font-weight:600;">Speed</th>
+                    </tr>
+                  </thead>
+                  <tbody id="hist-table-body">
+                    <!-- Dynamic rows -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <button id="clear-history-btn" class="btn btn-danger" style="display:none;font-size:12px;">
+              <i data-lucide="x"></i> Clear History View
+            </button>
+          </div>
+        </div>
+
+        <!-- MAP CONTROLS -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="map" style="width:11px;height:11px;"></i>
+            Map Controls
+          </div>
+          <div class="glass-card">
+            <div class="btn-group">
+              <button id="toggle-follow-btn" class="btn btn-secondary">
+                <i data-lucide="locate"></i> Auto-Centre: ON
+              </button>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                <button id="satellite-btn" class="btn btn-primary" style="background:linear-gradient(135deg,#6366f1,#4338ca);border:none;">
+                  <i data-lucide="layers"></i> Satellite
+                </button>
+                <button id="fit-fleet-btn" class="btn btn-primary" style="background:linear-gradient(135deg,#0ea5e9,#0369a1);border:none;">
+                  <i data-lucide="maximize-2"></i> Fit Fleet
+                </button>
+              </div>
+              <button id="export-route-btn" class="btn btn-primary" style="background:linear-gradient(135deg,#10b981,#059669);border:none;">
+                <i data-lucide="download"></i> Export Route (GeoJSON)
+              </button>
+              <button id="reset-route-btn" class="btn btn-danger">
+                <i data-lucide="refresh-cw"></i> Reset Selected Route
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ALERT HISTORY -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="bell" style="width:11px;height:11px;"></i>
+            System Alerts (<span id="alert-count">0</span>)
+          </div>
+          <div class="alert-history-list" id="alert-history-list">
+            <div class="alert-empty">No alerts yet. System is monitoring...</div>
+          </div>
+        </div>
+
+        <!-- SIMULATOR TOOL -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="play-circle" style="width:11px;height:11px;"></i>
+            Simulation Tool
+          </div>
+          <div class="glass-card">
+            <p style="font-size:12px;color:var(--text-secondary);line-height:1.6;">
+              No phone nearby? Simulate two vehicles on live MUNPL plant coordinates.
+            </p>
+            <button id="simulator-btn" class="btn btn-primary" style="background:linear-gradient(135deg,#a855f7,#7e22ce);border:none;">
+              <i data-lucide="play"></i> Start Plant Route Sim
+            </button>
+          </div>
+        </div>
+
+        <!-- MOBILE PAIRING QR -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="smartphone" style="width:11px;height:11px;"></i>
+            Vehicle Pairing
+          </div>
+          <div class="glass-card" style="align-items:center;gap:10px;">
+
+            <!-- Connection Mode Selection -->
+            <div style="width:100%; display:flex; flex-direction:column; gap:6px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px 12px; box-sizing:border-box;">
+              <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.8px; font-weight:700; color:var(--color-success); display:flex; align-items:center; gap:5px; margin-bottom:2px;">
+                <i data-lucide="server" style="width:11px; height:11px;"></i> NTPC Server Connection
+              </div>
+              <select id="qr-url-select" class="input-field" style="font-size:12px; padding:6px 8px; width:100%; background:rgba(15,23,42,0.6); border:1px solid rgba(255,255,255,0.1); border-radius:6px; color:#fff; cursor:pointer;">
+                <option value="">Loading network routes…</option>
+              </select>
+              <a id="public-tracker-url-link" href="#" target="_blank"
+                 style="font-size:11px; font-family:monospace; color:var(--color-success); word-break:break-all; text-decoration:none; font-weight:600; margin-top:4px; display:block;">Loading…</a>
+              <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Select Local Wi-Fi if vehicle is on the same network, or Public IP if tracking over cellular data.</div>
+            </div>
+
+            <p style="font-size:11px; color:var(--text-secondary); text-align:center; line-height:1.6;"
+               >Scan QR with any vehicle phone to open the tracker instantly.</p>
+            <div class="qr-code-box">
+              <img id="qr-code-img" src="/api/qr-code" alt="GPS Tracker QR Code" style="width:160px; height:160px; display:block; border-radius:6px; background:#fff; padding:6px; box-sizing:border-box;">
+            </div>
+            <a id="qr-tracker-url" class="qr-link" href="#" target="_blank">Loading tracker URL…</a>
+
+            <!-- Download / Print QR button -->
+            <a id="download-qr-btn" href="/api/qr-code" download="MUNPL-Tracker-QR.png"
+               style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:9px 0;border-radius:10px;background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);color:var(--color-accent);font-size:12px;font-weight:600;text-decoration:none;cursor:pointer;transition:background 0.2s;">
+              <i data-lucide="download" style="width:13px;height:13px;"></i>
+              Download QR for Printing
+            </a>
+
+            <!-- Setup steps -->
+            <div style="width:100%;background:rgba(0,0,0,0.2);border-radius:8px;padding:10px 12px;font-size:11px;color:var(--text-secondary);line-height:1.7;">
+              <div style="font-weight:700;color:var(--text-primary);margin-bottom:6px;display:flex;align-items:center;gap:5px;">
+                <i data-lucide="info" style="width:12px;height:12px;color:var(--color-accent);"></i>
+                Driver Setup Guide
+              </div>
+              <div>1. Paste the <strong>printed QR code</strong> on the vehicle dashboard.</div>
+              <div>2. Driver opens camera → scans QR → tracker page opens in browser.</div>
+              <div>3. Tap <strong>Start Live Tracking</strong>. Works on <strong>mobile data</strong>.</div>
+              <div>4. Keep the screen on (Wake Lock activates automatically).</div>
+              <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border-glass);color:var(--color-warning);display:flex;gap:5px;">
+                <i data-lucide="alert-triangle" style="width:11px;height:11px;flex-shrink:0;margin-top:2px;"></i>
+                <span>The NTPC server must be running for tracking to work.</span>
+              </div>
+            </div>
+
+            <!-- Phone lock tip -->
+            <div style="width:100%;border-top:1px solid var(--border-glass);padding-top:8px;margin-top:2px;font-size:11px;color:var(--text-secondary);line-height:1.5;display:flex;gap:6px;align-items:flex-start;">
+              <span style="color:var(--color-accent);">🔒</span>
+              <span><strong>Prevent screen lock:</strong> Phone Settings → Display → Auto-Lock → <strong>Never</strong> while tracking.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- DATA STREAM CONSOLE -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="terminal" style="width:11px;height:11px;"></i>
+            Data Stream Console
+          </div>
+          <div class="console-logs" id="console-logs">
+            <div class="log-line system">Initialising telemetry system...</div>
+          </div>
+        </div>
+
+        <!-- DATABASE STATS -->
+        <div>
+          <div class="card-section-title">
+            <i data-lucide="database" style="width:11px;height:11px;"></i>
+            History Database
+          </div>
+          <div class="glass-card" style="gap:6px;font-size:11px;">
+            <div style="display:flex;justify-content:space-between;"><span style="color:var(--text-muted);">Location Records</span><strong id="db-stat-points">—</strong></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:var(--text-muted);">Tracked Devices</span><strong id="db-stat-devices">—</strong></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:var(--text-muted);">Alert Records</span><strong id="db-stat-alerts">—</strong></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:var(--text-muted);">DB Size</span><strong id="db-stat-size">—</strong></div>
+            <div id="db-unavailable" style="display:none;color:var(--color-warning);align-items:center;gap:4px;">
+              <i data-lucide="alert-circle" style="width:11px;height:11px;"></i> Memory-only mode — history not persisted
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /sidebar-content -->
+    </div><!-- /sidebar -->
+
+    <!-- ── MAP PANEL ──────────────────────────────────────────────────────── -->
+    <div class="map-container">
+      <div id="map">
+        <div class="map-loading-placeholder">
+          <i data-lucide="map-pin" class="loading-icon" style="width:48px;height:48px;color:var(--color-accent);"></i>
+          <p id="map-status-text" style="color:var(--text-secondary);font-size:14px;">Loading Google Maps API...</p>
+        </div>
+      </div>
+
+      <!-- Floating telemetry overlay -->
+      <div class="map-overlay-panel">
+        <div class="map-overlay-card">
+          <div class="overlay-stat">
+            <span class="overlay-label">Tracking Target</span>
+            <span id="overlay-vehicle-id" class="overlay-val" style="font-size:13px;color:var(--color-success);">No Active Transmitter</span>
+          </div>
+          <div class="overlay-divider"></div>
+          <div class="overlay-stat">
+            <span class="overlay-label">Position</span>
+            <span id="overlay-position" class="overlay-val" style="font-size:13px;font-family:monospace;">—, —</span>
+          </div>
+          <div class="overlay-divider"></div>
+          <div class="overlay-stat">
+            <span class="overlay-label">Speed</span>
+            <span class="overlay-val"><span id="overlay-speed">0</span> <span style="font-size:11px;font-weight:400;color:var(--text-secondary);">km/h</span></span>
+          </div>
+          <div class="overlay-divider"></div>
+          <div class="overlay-stat">
+            <span class="overlay-label">Geofence</span>
+            <span id="overlay-geofence" class="overlay-val" style="font-size:13px;">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- /map-container -->
+
+  </div><!-- /dashboard-container -->
+</div><!-- /app-wrapper -->
+
+<!-- ═══ API KEY MODAL ══════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="config-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Enter Google Maps API Key</h2>
+      <p>A Maps API key is required to render the interactive tracking map.</p>
+    </div>
+    <div class="form-group">
+      <label for="maps-key-input">API Key</label>
+      <input type="password" id="maps-key-input" class="input-field" placeholder="AIzaSy...">
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);background:rgba(0,0,0,0.2);padding:10px 12px;border-radius:8px;line-height:1.6;">
+      💡 Set <code style="color:var(--color-accent);">GOOGLE_MAPS_API_KEY</code> in <strong>.env</strong> to skip this prompt permanently.
+    </div>
+    <button id="save-config-btn" class="btn btn-primary">
+      <i data-lucide="check"></i> Save and Load Map
+    </button>
+  </div>
+</div>
+
+<!-- ═══ TOAST NOTIFICATIONS ════════════════════════════════════════════════ -->
+<div id="toast-container" class="toast-container"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!--                         DASHBOARD JAVASCRIPT                          -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+  // ── Backend Host Resolution (Supports local dev & production) ───────────────
+  const BACKEND_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? (window.location.port === '5173' || window.location.port === '8080' ? 'http://localhost:3000' : '')
+    : '';
+
+  lucide.createIcons();
+
+  // ── Helper: Distinct Vehicle Color Generator ──────────────────────────────
+  function getVehicleColor(id) {
+    if (!id) return '#ef4444';
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+      hash = id.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const hue = Math.abs(hash) % 360;
+    return `hsl(${hue}, 85%, 50%)`;
+  }
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let socket;
+  let map = null;
+  let googleMapsApiKey = '';
+
+  // NTPC-MUNPL — Meja Urja Nigam Pvt. Ltd., Meja, Prayagraj, UP
+  const defaultCenter = { lat: 25.1453, lng: 81.9435 };
+
+  let isFollowMode    = true;
+  let isSatelliteMode = false;
+
+  let trackers = {};            // Local fleet state mirror
+  let selectedTrackerId = null; // Vehicle shown in HUD
+  let routeTrackerId    = null; // Vehicle whose live route trace is shown (explicit click only)
+
+  // Maps objects keyed by device ID
+  let markers   = {};
+  let circles   = {};
+  let polylines = {};
+  let infoWindows = {};
+  let geofenceCircle = null;
+
+  let speedHistory = [];
+  const MAX_SPARKLINE = 30;
+
+  // Alert history (received from server on connect)
+  let alerts = [];
+
+  // ── DOM references ────────────────────────────────────────────────────────
+  const socketStatusPill  = document.getElementById('socket-status');
+  const trackerStatusPill = document.getElementById('tracker-status');
+  const hudSpeed          = document.getElementById('hud-speed');
+  const hudDistance       = document.getElementById('hud-distance');
+  const hudHeading        = document.getElementById('hud-heading');
+  const hudAccuracy       = document.getElementById('hud-accuracy');
+  const diagOs            = document.getElementById('diag-os');
+  const diagBattery       = document.getElementById('diag-battery');
+  const diagPing          = document.getElementById('diag-ping');
+  const logConsole        = document.getElementById('console-logs');
+  const configModal       = document.getElementById('config-modal');
+  const mapsKeyInput      = document.getElementById('maps-key-input');
+  const saveConfigBtn     = document.getElementById('save-config-btn');
+  const overlayVehicle    = document.getElementById('overlay-vehicle-id');
+  const overlayPos        = document.getElementById('overlay-position');
+  const overlaySpeed      = document.getElementById('overlay-speed');
+  const overlayGeofence   = document.getElementById('overlay-geofence');
+
+  // ── Logging ───────────────────────────────────────────────────────────────
+  function logToConsole(msg, type = 'info') {
+    const line = document.createElement('div');
+    line.className = `log-line ${type}`;
+    const t = new Date().toTimeString().split(' ')[0];
+    line.textContent = `[${t}] ${msg}`;
+    logConsole.appendChild(line);
+    logConsole.scrollTop = logConsole.scrollHeight;
+  }
+
+  // ── Live Clock ────────────────────────────────────────────────────────────
+  function initClock() {
+    const clockEl = document.getElementById('header-clock-time');
+    const dateEl  = document.getElementById('header-clock-date');
+    const days    = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const months  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    function tick() {
+      const now = new Date();
+      const h = String(now.getHours()).padStart(2,'0');
+      const m = String(now.getMinutes()).padStart(2,'0');
+      const s = String(now.getSeconds()).padStart(2,'0');
+      clockEl.textContent = `${h}:${m}:${s}`;
+      dateEl.textContent  = `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+    }
+    tick();
+    setInterval(tick, 1000);
+  }
+  initClock();
+
+  // ── Toast System ──────────────────────────────────────────────────────────
+  function showToast(title, message, type = 'info', duration = 6000) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    const iconMap = { danger:'alert-triangle', success:'check-circle-2', warning:'alert-circle', info:'info' };
+    toast.innerHTML = `
+      <div class="toast-icon">
+        <i data-lucide="${iconMap[type] || 'info'}" style="width:16px;height:16px;"></i>
+      </div>
+      <div class="toast-body">
+        <div class="toast-title">${title}</div>
+        <div class="toast-message">${message}</div>
+      </div>
+      <button class="toast-close" onclick="dismissToast(this)" title="Dismiss">&times;</button>
+    `;
+    container.appendChild(toast);
+    lucide.createIcons();
+    setTimeout(() => {
+      toast.classList.add('toast-exit');
+      toast.addEventListener('animationend', () => { if (toast.parentNode) toast.remove(); }, { once: true });
+    }, duration);
+  }
+
+  window.dismissToast = function(btn) {
+    const t = btn.closest('.toast');
+    if (!t) return;
+    t.classList.add('toast-exit');
+    t.addEventListener('animationend', () => { if (t.parentNode) t.remove(); }, { once: true });
+  };
+
+  // ── Alert History Panel ───────────────────────────────────────────────────
+  function renderAlerts() {
+    const container = document.getElementById('alert-history-list');
+    const countEl   = document.getElementById('alert-count');
+    if (!container) return;
+    countEl.textContent = alerts.length;
+
+    if (alerts.length === 0) {
+      container.innerHTML = '<div class="alert-empty">No alerts yet. System is monitoring...</div>';
+      return;
+    }
+
+    const iconMap = {
+      geofence_breach:    'alert-triangle',
+      geofence_restored:  'check-circle-2',
+      device_connected:   'smartphone',
+      signal_lost:        'wifi-off',
+      device_timeout:     'clock'
+    };
+
+    const titleMap = {
+      geofence_breach:   '⚠ Geofence Breach',
+      geofence_restored: 'Geofence Restored',
+      device_connected:  'Device Connected',
+      signal_lost:       'Signal Lost',
+      device_timeout:    'Device Timeout'
+    };
+
+    // Show last 10
+    const recent = alerts.slice(0, 10);
+    container.innerHTML = recent.map((a, idx) => {
+      const icon  = iconMap[a.type]  || 'bell';
+      const title = titleMap[a.type] || a.type;
+      const timeAgo = formatTimeAgo(a.timestamp);
+      return `
+        <div class="alert-item severity-${a.severity}" style="animation-delay:${idx * 0.04}s;">
+          <div class="alert-item-icon">
+            <i data-lucide="${icon}" style="width:13px;height:13px;"></i>
+          </div>
+          <div class="alert-item-body">
+            <div class="alert-item-msg">${a.message}</div>
+            <div class="alert-item-time">${title} · ${timeAgo}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    lucide.createIcons();
+  }
+
+  function formatTimeAgo(ts) {
+    const diff = Date.now() - ts;
+    if (diff < 60000)  return `${Math.floor(diff / 1000)}s ago`;
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    return new Date(ts).toTimeString().split(' ')[0];
+  }
+
+  // ── Header Fleet Summary ──────────────────────────────────────────────────
+  function updateFleetSummary() {
+    const ids = Object.keys(trackers);
+    let moving = 0, idle = 0, offline = 0;
+    for (const id of ids) {
+      const tr = trackers[id];
+      if (!tr.active) { offline++; continue; }
+      if ((tr.currentLocation?.speed || 0) > 2) moving++;
+      else idle++;
+    }
+    document.getElementById('hdr-total').textContent   = ids.length;
+    document.getElementById('hdr-active').textContent  = moving;
+    document.getElementById('hdr-idle').textContent    = idle;
+    document.getElementById('hdr-offline').textContent = offline;
+  }
+
+  // ── Haversine (client-side) ───────────────────────────────────────────────
+  function getDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 +
+      Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  // ── Compass ───────────────────────────────────────────────────────────────
+  function getCompassDir(deg) {
+    if (deg === null || deg === undefined) return 'N/A';
+    const dirs = ['N','NE','E','SE','S','SW','W','NW'];
+    return `${dirs[Math.round(((deg % 360) / 45)) % 8]} (${Math.round(deg)}°)`;
+  }
+
+  // ── Speed Sparkline (canvas) ──────────────────────────────────────────────
+  function drawSparkline() {
+    const canvas = document.getElementById('speed-sparkline');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.offsetWidth || canvas.width;
+    const H = canvas.height;
+    canvas.width = W;
+    ctx.clearRect(0, 0, W, H);
+    if (speedHistory.length < 2) return;
+
+    const maxVal = Math.max(...speedHistory, 5);
+    const toY = s => H - (s / maxVal) * (H - 6) - 3;
+    const toX = i => (i / (speedHistory.length - 1)) * W;
+
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, 'rgba(59,130,246,0.35)');
+    grad.addColorStop(1, 'rgba(59,130,246,0.0)');
+
+    ctx.beginPath();
+    speedHistory.forEach((s, i) => i === 0 ? ctx.moveTo(toX(i), toY(s)) : ctx.lineTo(toX(i), toY(s)));
+    ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
+    ctx.fillStyle = grad; ctx.fill();
+
+    ctx.beginPath();
+    speedHistory.forEach((s, i) => i === 0 ? ctx.moveTo(toX(i), toY(s)) : ctx.lineTo(toX(i), toY(s)));
+    ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+
+    const lx = toX(speedHistory.length - 1);
+    const ly = toY(speedHistory[speedHistory.length - 1]);
+    ctx.beginPath(); ctx.arc(lx, ly, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(96,165,250,0.2)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(lx, ly, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#60a5fa'; ctx.fill();
+
+    const peakEl = document.getElementById('sparkline-peak');
+    if (peakEl) peakEl.textContent = `${Math.max(...speedHistory).toFixed(0)} km/h peak`;
+  }
+
+  // ── Trip Statistics calculation ───────────────────────────────────────────
+  function updateTripStats(tr) {
+    const avgSpeedEl   = document.getElementById('trip-avg-speed');
+    const maxSpeedEl   = document.getElementById('trip-max-speed');
+    const durationEl   = document.getElementById('trip-duration');
+    const waypointsEl  = document.getElementById('trip-waypoints');
+
+    if (!tr || !tr.routeHistory || tr.routeHistory.length === 0) {
+      [avgSpeedEl, maxSpeedEl, durationEl, waypointsEl].forEach(el => { if (el) el.textContent = '—'; });
+      return;
+    }
+
+    // Average speed = totalDistance / elapsed time
+    const elapsedHrs = (Date.now() - (tr.tripStartTime || Date.now())) / 3600000;
+    const avgSpeed = elapsedHrs > 0 ? Math.min(tr.totalDistance / elapsedHrs, 999) : 0;
+
+    const maxSpeed = tr.maxSpeed || 0;
+    const waypoints = tr.routeHistory.length;
+
+    // Format duration
+    const elapsedSec = Math.floor((Date.now() - (tr.tripStartTime || Date.now())) / 1000);
+    const h = Math.floor(elapsedSec / 3600);
+    const m = Math.floor((elapsedSec % 3600) / 60);
+    const s = elapsedSec % 60;
+    const duration = h > 0
+      ? `${h}h ${String(m).padStart(2,'0')}m`
+      : `${m}m ${String(s).padStart(2,'0')}s`;
+
+    if (avgSpeedEl)  avgSpeedEl.textContent  = avgSpeed.toFixed(1);
+    if (maxSpeedEl)  maxSpeedEl.textContent  = maxSpeed.toFixed(1);
+    if (durationEl)  durationEl.textContent  = duration;
+    if (waypointsEl) waypointsEl.textContent = waypoints;
+  }
+
+  // ── Fleet List ────────────────────────────────────────────────────────────
+  function updateFleetList() {
+    const container = document.getElementById('fleet-list-container');
+    const countEl   = document.getElementById('fleet-count');
+    const ids = Object.keys(trackers);
+    countEl.textContent = ids.length;
+
+    if (ids.length === 0) {
+      container.innerHTML = `<div style="font-size:11px;color:var(--text-muted);text-align:center;padding:14px 0;">No active vehicle transmitters</div>`;
+      return;
+    }
+
+    let html = '';
+    for (const id of ids) {
+      const tr = trackers[id];
+      const name  = tr.deviceInfo?.device || `Tracker (${id.substring(0, 5)})`;
+      const speed = tr.currentLocation ? `${(tr.currentLocation.speed || 0).toFixed(0)} km/h` : '0 km/h';
+      const isSelected      = id === selectedTrackerId;
+      const hasRouteActive  = id === routeTrackerId;
+
+      let dotColor   = 'var(--color-danger)';
+      let statusText = 'Offline';
+      if (tr.active) {
+        if ((tr.currentLocation?.speed || 0) > 2) {
+          dotColor = 'var(--color-success)'; statusText = 'Moving';
+        } else {
+          dotColor = 'var(--color-warning)'; statusText = 'Idle';
+        }
+      }
+
+      const isOutOfBounds = tr.currentLocation && !tr.isInsideGeofence;
+      const oobBadge = isOutOfBounds
+        ? `<span style="font-size:9px;padding:1px 4px;border-radius:4px;background:rgba(239,68,68,0.15);color:var(--color-danger);border:1px solid rgba(239,68,68,0.25);font-weight:600;">OOB</span>`
+        : '';
+      const routeBadge = hasRouteActive
+        ? `<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(59,130,246,0.15);color:var(--color-accent);border:1px solid rgba(59,130,246,0.3);font-weight:600;">ROUTE</span>`
+        : '';
+
+      html += `
+        <div class="fleet-item ${isSelected ? 'selected' : ''}" onclick="selectVehicle('${id}')" title="Click to select &amp; show route trace">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0;"></div>
+            <div style="display:flex;flex-direction:column;">
+              <span style="font-size:13px;font-weight:600;">${name}</span>
+              <span style="font-size:10px;color:var(--text-muted);display:flex;align-items:center;gap:4px;">${statusText} ${oobBadge} ${routeBadge}</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:5px;">
+            <span style="font-size:12px;font-weight:600;color:var(--text-secondary);">${speed}</span>
+            <button onclick="event.stopPropagation();openHistoryForVehicle('${id}','${name}')" title="View trip history"
+              style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.25);color:#f59e0b;border-radius:6px;padding:3px 6px;font-size:10px;cursor:pointer;display:flex;align-items:center;gap:2px;">
+              <i data-lucide="clock" style="width:9px;height:9px;"></i>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+    container.innerHTML = html;
+    refreshHistoryVehicleDropdown();
+  }
+
+  window.selectVehicle = function(id) {
+    if (id !== selectedTrackerId) { speedHistory = []; drawSparkline(); }
+    selectedTrackerId = id;
+    routeTrackerId    = id;   // explicit click → show route trace
+    updateFleetList();
+    updateDashboard();
+    const loc = trackers[id]?.currentLocation;
+    if (loc && map) map.panTo(new google.maps.LatLng(loc.lat, loc.lng));
+    logToConsole(`Selected: ${trackers[id]?.deviceInfo?.device || id} — live route trace active.`);
+  };
+
+  // ── Map Info Window builder ───────────────────────────────────────────────
+  function buildInfoWindowContent(id, tr) {
+    const loc  = tr.currentLocation;
+    const name = tr.deviceInfo?.device || `Tracker-${id.substring(0,5)}`;
+    let dotColor = '#ef4444';
+    if (tr.active) dotColor = (loc?.speed || 0) > 2 ? '#10b981' : '#f59e0b';
+
+    const posStr   = loc ? `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}` : 'N/A';
+    const speedStr = loc ? `${(loc.speed || 0).toFixed(1)} km/h` : 'N/A';
+    const distStr  = tr.geofenceDistanceM != null ? `${tr.geofenceDistanceM}m from centre` : 'N/A';
+    const gfStr    = tr.isInsideGeofence ? '✓ Inside boundary' : '⚠ Outside boundary';
+    const battStr  = tr.deviceInfo?.battery != null ? `${tr.deviceInfo.battery}%` : 'N/A';
+    const landmarkStr = loc?.nearestLandmark || 'N/A';
+
+    return `
+      <div class="map-info-window">
+        <div class="iw-header">
+          <div class="iw-status-dot" style="background:${dotColor};"></div>
+          <span class="iw-name">${name}</span>
+        </div>
+        <div class="iw-rows">
+          <div class="iw-row">
+            <span class="iw-row-label">Position</span>
+            <span class="iw-row-value" style="font-family:monospace;font-size:11px;">${posStr}</span>
+          </div>
+          <div class="iw-row">
+            <span class="iw-row-label">Nearest Landmark</span>
+            <span class="iw-row-value" style="color:var(--color-accent);font-weight:600;">${landmarkStr}</span>
+          </div>
+          <div class="iw-row">
+            <span class="iw-row-label">Speed</span>
+            <span class="iw-row-value">${speedStr}</span>
+          </div>
+          <div class="iw-row">
+            <span class="iw-row-label">Distance Covered</span>
+            <span class="iw-row-value">${(tr.totalDistance || 0).toFixed(2)} km</span>
+          </div>
+          <div class="iw-row">
+            <span class="iw-row-label">Geofence</span>
+            <span class="iw-row-value" style="color:${tr.isInsideGeofence ? 'var(--color-success)' : 'var(--color-danger)'}">${gfStr}</span>
+          </div>
+          <div class="iw-row">
+            <span class="iw-row-label">Plant Distance</span>
+            <span class="iw-row-value">${distStr}</span>
+          </div>
+          <div class="iw-row">
+            <span class="iw-row-label">Battery</span>
+            <span class="iw-row-value">${battStr}</span>
+          </div>
+          <div class="iw-row">
+            <span class="iw-row-label">OS / ECU</span>
+            <span class="iw-row-value">${tr.deviceInfo?.os || 'Unknown'}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ── Main Dashboard Update ─────────────────────────────────────────────────
+  function updateDashboard() {
+    updateFleetList();
+    updateFleetSummary();
+
+    // Prune deleted trackers from map
+    for (const id in markers) {
+      if (!trackers[id]) {
+        markers[id].setMap(null);
+        delete markers[id];
+        if (circles[id])     { circles[id].setMap(null); delete circles[id]; }
+        if (polylines[id])   { polylines[id].setMap(null); delete polylines[id]; }
+        if (infoWindows[id]) { infoWindows[id].close(); delete infoWindows[id]; }
+      }
+    }
+
+    // Update/create markers for each tracker
+    for (const id in trackers) {
+      const tr  = trackers[id];
+      const loc = tr.currentLocation;
+      if (!loc) continue;
+
+      const isSelected = id === selectedTrackerId;
+      const vColor = getVehicleColor(id);
+
+      if (map && window.google?.maps) {
+        try {
+          const position   = new google.maps.LatLng(loc.lat, loc.lng);
+
+          // ── Build emoji marker icon ──
+          const makeCarIcon = function(selected) {
+            const size = selected ? 52 : 42;
+            const canvas = document.createElement('canvas');
+            canvas.width  = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            const center = size / 2;
+            const radius = selected ? 20 : 16;
+            
+            // Draw outer glow/shadow
+            ctx.shadowColor = selected ? '#3b82f6' : 'rgba(0, 0, 0, 0.4)';
+            ctx.shadowBlur  = selected ? 12 : 6;
+            ctx.shadowOffsetY = selected ? 0 : 3;
+            
+            // Draw colored background circle
+            ctx.beginPath();
+            ctx.arc(center, center, radius, 0, Math.PI * 2);
+            ctx.fillStyle = vColor;
+            ctx.fill();
+            
+            // Draw white border
+            ctx.shadowBlur = 0; // turn off shadow for border
+            ctx.shadowOffsetY = 0;
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = selected ? 3 : 2;
+            ctx.stroke();
+            
+            // Draw emoji icon in center
+            ctx.font = `${selected ? 20 : 16}px serif`;
+            ctx.textAlign    = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🚗', center, center);
+            return {
+              url: canvas.toDataURL(),
+              scaledSize: new google.maps.Size(size, size),
+              anchor: new google.maps.Point(center, center)
+            };
+          };
+
+          if (!markers[id]) {
+            // ── Create marker ──
+            markers[id] = new google.maps.Marker({
+              position,
+              map,
+              title: tr.deviceInfo?.device || `Vehicle ${id.substring(0,5)}`,
+              icon: makeCarIcon(isSelected),
+              zIndex: isSelected ? 10 : 5
+            });
+
+            // Accuracy circle
+            circles[id] = new google.maps.Circle({
+              map, center: position,
+              radius: Math.max(loc.accuracy || 10, 10),
+              fillColor: vColor, fillOpacity: 0.08,
+              strokeColor: vColor, strokeOpacity: 0.2, strokeWeight: 1
+            });
+
+            // Route polyline — only shown when this device is selected
+            polylines[id] = new google.maps.Polyline({
+              geodesic: true,
+              strokeColor: vColor,
+              strokeOpacity: 0.9,
+              strokeWeight: 4,
+              map: id === routeTrackerId ? map : null   // only shown when explicitly selected
+            });
+
+            // Info window
+            infoWindows[id] = new google.maps.InfoWindow({ maxWidth: 280 });
+
+            // Click handler to open info window and select vehicle
+            markers[id].addListener('click', () => {
+              // Close all others
+              for (const iid in infoWindows) infoWindows[iid].close();
+              infoWindows[id].setContent(buildInfoWindowContent(id, trackers[id]));
+              infoWindows[id].open(map, markers[id]);
+              if (id !== selectedTrackerId) selectVehicle(id);
+            });
+
+          } else {
+            // ── Update marker ──
+            markers[id].setPosition(position);
+            markers[id].setTitle(tr.deviceInfo?.device || `Vehicle ${id.substring(0,5)}`);
+            markers[id].setZIndex(isSelected ? 10 : 5);
+            markers[id].setIcon(makeCarIcon(isSelected));
+
+            if (circles[id]) {
+              circles[id].setCenter(position);
+              circles[id].setRadius(Math.max(loc.accuracy || 10, 10));
+              circles[id].setOptions({ fillColor: vColor, strokeColor: vColor });
+            }
+
+            // Route trace visible only for the explicitly clicked vehicle
+            if (polylines[id]) {
+              polylines[id].setMap(id === routeTrackerId ? map : null);
+            }
+
+            // Refresh open info window content
+            if (infoWindows[id]?.getMap()) {
+              infoWindows[id].setContent(buildInfoWindowContent(id, trackers[id]));
+            }
+          }
+
+          // Draw route polyline path (only matters when visible)
+          if (polylines[id] && tr.routeHistory?.length) {
+            polylines[id].setPath(tr.routeHistory.map(p => new google.maps.LatLng(p.lat, p.lng)));
+          }
+        } catch (mapErr) {
+          console.warn("Map update failed for device ID " + id + ":", mapErr);
+        }
+      }
+    }
+
+    // ── Update selected tracker HUD ──
+    const selTr = selectedTrackerId ? trackers[selectedTrackerId] : null;
+
+    if (selTr?.currentLocation) {
+      const loc = selTr.currentLocation;
+
+      hudSpeed.textContent    = (loc.speed || 0).toFixed(1);
+      hudDistance.textContent = (selTr.totalDistance || 0).toFixed(2);
+      hudHeading.textContent  = getCompassDir(loc.heading);
+      hudAccuracy.textContent = Math.round(loc.accuracy || 0);
+
+      speedHistory.push(loc.speed || 0);
+      if (speedHistory.length > MAX_SPARKLINE) speedHistory.shift();
+      drawSparkline();
+
+      overlayPos.textContent   = `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`;
+      overlaySpeed.textContent = Math.round(loc.speed || 0);
+      overlayVehicle.textContent = selTr.deviceInfo?.device || `Tracker (${selectedTrackerId.substring(0,5)})`;
+
+      // Geofence display
+      const gfEl  = document.getElementById('diag-geofence');
+      const inside = selTr.isInsideGeofence !== undefined
+        ? selTr.isInsideGeofence
+        : (getDistanceMeters(loc.lat, loc.lng, defaultCenter.lat, defaultCenter.lng) <= 1500);
+      if (gfEl) {
+        gfEl.textContent = inside ? 'Within Plant' : 'Out of Bounds';
+        gfEl.style.color = inside ? 'var(--color-success)' : 'var(--color-danger)';
+      }
+      overlayGeofence.textContent = inside ? '✓ Inside' : '⚠ OOB';
+      overlayGeofence.style.color = inside ? 'var(--color-success)' : 'var(--color-danger)';
+
+      // Last ping
+      const ageSec = Math.round((Date.now() - loc.timestamp) / 1000);
+      diagPing.textContent = ageSec < 2 ? 'Live' : `${ageSec}s ago`;
+
+      diagOs.textContent      = selTr.deviceInfo?.os || 'Unknown';
+      diagBattery.textContent = selTr.deviceInfo?.battery != null ? `${selTr.deviceInfo.battery}%` : 'N/A';
+
+      trackerStatusPill.className = selTr.active ? 'status-pill online' : 'status-pill offline';
+      trackerStatusPill.querySelector('.status-text').textContent = selTr.active ? 'Tracking Live' : 'Signal Lost';
+
+      // Trip stats
+      updateTripStats(selTr);
+
+      // Console (throttled)
+      if (Math.random() < 0.2) {
+        logToConsole(`[${selTr.deviceInfo?.device || 'SYSTEM'}] ${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)} · ${(loc.speed || 0).toFixed(1)} km/h`);
+      }
+
+      // Auto-follow
+      if (isFollowMode && map) map.panTo(new google.maps.LatLng(loc.lat, loc.lng));
+
+    } else {
+      // No selected tracker — reset HUD
+      hudSpeed.textContent    = '0.0';
+      hudDistance.textContent = '0.00';
+      hudHeading.textContent  = 'N/A';
+      hudAccuracy.textContent = '—';
+      diagOs.textContent = diagBattery.textContent = diagPing.textContent = '—';
+      const gfEl = document.getElementById('diag-geofence');
+      if (gfEl) gfEl.textContent = '—';
+      overlayVehicle.textContent = 'No Active Transmitter';
+      overlayPos.textContent     = '—, —';
+      overlaySpeed.textContent   = '0';
+      overlayGeofence.textContent = '—';
+      overlayGeofence.style.color = '';
+      trackerStatusPill.className = 'status-pill offline';
+      trackerStatusPill.querySelector('.status-text').textContent = 'No Signal';
+      updateTripStats(null);
+    }
+  }
+
+  // ── Periodic ping age refresh ─────────────────────────────────────────────
+  setInterval(() => {
+    const tr = selectedTrackerId ? trackers[selectedTrackerId] : null;
+    if (!tr?.active || !tr.currentLocation) return;
+    const ageSec = Math.round((Date.now() - tr.currentLocation.timestamp) / 1000);
+    diagPing.textContent = ageSec < 2 ? 'Live' : `${ageSec}s ago`;
+    updateTripStats(tr); // keep duration ticking
+  }, 1000);
+
+  // ── Connect WebSocket ─────────────────────────────────────────────────────
+  function connectSocket() {
+    socket = io(BACKEND_URL || undefined, {
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 8000
+    });
+
+    socket.on('connect', () => {
+      socketStatusPill.className = 'status-pill online';
+      socketStatusPill.querySelector('.status-text').textContent = 'Connected';
+      logToConsole('Connected to telemetry server.', 'success');
+    });
+
+    socket.on('disconnect', (reason) => {
+      socketStatusPill.className = 'status-pill offline';
+      socketStatusPill.querySelector('.status-text').textContent = 'Reconnecting…';
+      logToConsole(`Server connection lost (${reason}). Auto-reconnecting…`, 'error');
+    });
+
+    socket.on('reconnect', (attempt) => {
+      logToConsole(`Reconnected after ${attempt} attempt(s).`, 'success');
+    });
+
+
+    socket.on('init_state', (state) => {
+      trackers = state;
+      logToConsole(`Session synced — ${Object.keys(state).length} vehicle(s) in fleet.`);
+      updateDashboard();
+    });
+
+    socket.on('dashboard_update', (state) => {
+      trackers = state;
+      updateDashboard();
+    });
+
+    socket.on('device_status', (data) => {
+      if (data.active) {
+        logToConsole(`New transmitter online: ${data.info?.device || data.id}`, 'success');
+        showToast('Vehicle Connected', `${data.info?.device || 'New vehicle'} is now transmitting live position.`, 'info');
+      }
+    });
+
+    // Receive full alert history on connect
+    socket.on('alert_history', (history) => {
+      alerts = history;
+      renderAlerts();
+    });
+
+    // Real-time new alerts
+    socket.on('new_alert', (alert) => {
+      alerts.unshift(alert);
+      if (alerts.length > 100) alerts.pop();
+      renderAlerts();
+
+      const titleMap = {
+        geofence_breach:   '⚠ Geofence Breach!',
+        geofence_restored: '✓ Geofence Restored',
+        signal_lost:       'Signal Lost',
+        device_connected:  'Device Connected'
+      };
+      const toastTitle = titleMap[alert.type] || 'System Alert';
+      const dur = alert.severity === 'danger' ? 10000 : 5000;
+      const toastType = alert.severity === 'danger' ? 'danger'
+                      : alert.severity === 'success' ? 'success'
+                      : alert.severity === 'warning' ? 'warning' : 'info';
+      showToast(toastTitle, alert.message, toastType, dur);
+      logToConsole(alert.message, alert.severity === 'danger' ? 'error'
+                                : alert.severity === 'success' ? 'success' : 'info');
+
+      // Flash geofence circle red on breach
+      if (alert.type === 'geofence_breach' && geofenceCircle) {
+        geofenceCircle.setOptions({ strokeColor: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.1 });
+        setTimeout(() => {
+          if (geofenceCircle) geofenceCircle.setOptions({ strokeColor: '#10b981', fillColor: '#10b981', fillOpacity: 0.05 });
+        }, 4000);
+      }
+      // Flash green on restore
+      if (alert.type === 'geofence_restored' && geofenceCircle) {
+        geofenceCircle.setOptions({ strokeColor: '#10b981', fillColor: '#10b981', fillOpacity: 0.15 });
+        setTimeout(() => {
+          if (geofenceCircle) geofenceCircle.setOptions({ fillOpacity: 0.05 });
+        }, 3000);
+      }
+    });
+  }
+
+  // ── Google Maps Initialiser ───────────────────────────────────────────────
+  // IMPORTANT: Must be on window for the Google Maps ?callback=initMap URL param
+  window.initMap = function initMap() {
+    document.getElementById('map-status-text').style.display = 'none';
+    logToConsole('Google Maps canvas initialised.', 'success');
+
+    map = new google.maps.Map(document.getElementById('map'), {
+      zoom: 15,
+      center: defaultCenter,
+      mapTypeId: 'roadmap',
+      styles: [
+        { elementType: 'geometry',             stylers: [{ color: '#0b0f19' }] },
+        { elementType: 'labels.text.stroke',   stylers: [{ color: '#0b0f19' }] },
+        { elementType: 'labels.text.fill',     stylers: [{ color: '#64748b' }] },
+        { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#94a3b8' }] },
+        { featureType: 'poi',                  elementType: 'labels.text.fill',   stylers: [{ color: '#64748b' }] },
+        { featureType: 'poi.park',             elementType: 'geometry',           stylers: [{ color: '#111827' }] },
+        { featureType: 'poi.park',             elementType: 'labels.text.fill',   stylers: [{ color: '#4b5563' }] },
+        { featureType: 'road',                 elementType: 'geometry',           stylers: [{ color: '#1e293b' }] },
+        { featureType: 'road',                 elementType: 'geometry.stroke',    stylers: [{ color: '#334155' }] },
+        { featureType: 'road',                 elementType: 'labels.text.fill',   stylers: [{ color: '#94a3b8' }] },
+        { featureType: 'road.highway',         elementType: 'geometry',           stylers: [{ color: '#334155' }] },
+        { featureType: 'road.highway',         elementType: 'geometry.stroke',    stylers: [{ color: '#475569' }] },
+        { featureType: 'water',                elementType: 'geometry',           stylers: [{ color: '#1e3a8a' }] },
+        { featureType: 'water',                elementType: 'labels.text.fill',   stylers: [{ color: '#60a5fa' }] }
+      ],
+      disableDefaultUI: false,
+      zoomControlOptions:      { position: google.maps.ControlPosition.RIGHT_BOTTOM },
+      streetViewControlOptions:{ position: google.maps.ControlPosition.RIGHT_BOTTOM },
+      mapTypeControlOptions:   { position: google.maps.ControlPosition.TOP_RIGHT }
+    });
+
+    // MUNPL plant marker
+    new google.maps.Marker({
+      position: defaultCenter,
+      map,
+      title: 'NTPC-MUNPL Plant Centre',
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 7,
+        fillColor: '#10b981',
+        fillOpacity: 1,
+        strokeColor: '#ffffff',
+        strokeWeight: 2
+      },
+      zIndex: 1
+    });
+
+    // Geofence boundary circle (1.5 km) — clickable so users can inspect it
+    geofenceCircle = new google.maps.Circle({
+      map,
+      center: defaultCenter,
+      radius: 1500,
+      fillColor: '#10b981', fillOpacity: 0.05,
+      strokeColor: '#10b981', strokeOpacity: 0.4, strokeWeight: 1.5,
+      clickable: true   // FIX: was false, preventing the click listener below
+    });
+
+    // Plant info window on geofence click
+    const plantIW = new google.maps.InfoWindow({
+      content: `<div class="map-info-window">
+        <div class="iw-header">
+          <div class="iw-status-dot" style="background:#10b981;"></div>
+          <span class="iw-name">NTPC-MUNPL Plant Boundary</span>
+        </div>
+        <div class="iw-rows">
+          <div class="iw-row"><span class="iw-row-label">Facility</span><span class="iw-row-value">Meja Urja Nigam Pvt. Ltd.</span></div>
+          <div class="iw-row"><span class="iw-row-label">Geofence Radius</span><span class="iw-row-value">1,500 m</span></div>
+          <div class="iw-row"><span class="iw-row-label">Centre Coords</span><span class="iw-row-value" style="font-family:monospace;font-size:11px;">25.14530°N, 81.94350°E</span></div>
+          <div class="iw-row"><span class="iw-row-label">Location</span><span class="iw-row-value">Meja, Prayagraj, UP</span></div>
+        </div>
+      </div>`,
+      position: defaultCenter,
+      maxWidth: 260
+    });
+    geofenceCircle.addListener('click', () => plantIW.open(map));
+
+    // Re-render any existing fleet data that arrived before the map loaded
+    if (Object.keys(trackers).length > 0) updateDashboard();
+    logToConsole('Geofence boundary active — 1.5 km radius around MUNPL plant.');
+  };
+
+  // ── Load Google Maps Script ───────────────────────────────────────────────
+  async function checkConfig() {
+    try {
+      const resp = await fetch(BACKEND_URL + '/api/config');
+      const data = await resp.json();
+      if (data.googleMapsApiKey) {
+        googleMapsApiKey = data.googleMapsApiKey;
+        loadGoogleMapsScript(googleMapsApiKey);
+      } else {
+        configModal.classList.add('active');
+      }
+    } catch (err) {
+      logToConsole('Failed to fetch server config.', 'error');
+    }
+  }
+
+  function loadGoogleMapsScript(key) {
+    if (window.google?.maps) { window.initMap(); return; }
+    const script = document.createElement('script');
+    // callback=initMap tells Google Maps to call window.initMap once loaded
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=geometry&callback=initMap&loading=async`;
+    script.async = true;
+    script.defer = true;
+    script.onerror = () => {
+      logToConsole('Google Maps failed to load. Check your API key and network.', 'error');
+      const el = document.getElementById('map-status-text');
+      el.style.display = 'block';
+      el.innerHTML = '⚠ Google Maps failed to load.<br><small style="color:#94a3b8;">Check API key · Ensure Maps JavaScript API is enabled</small>';
+    };
+    document.head.appendChild(script);
+    logToConsole('Loading Google Maps API…');
+  }
+
+  saveConfigBtn.addEventListener('click', () => {
+    const key = mapsKeyInput.value.trim();
+    if (!key) { alert('Please enter a valid API key.'); return; }
+    googleMapsApiKey = key;
+    configModal.classList.remove('active');
+    logToConsole('Loading map with provided API key...');
+    loadGoogleMapsScript(googleMapsApiKey);
+  });
+
+  // ── Map Control Buttons ───────────────────────────────────────────────────
+  document.getElementById('toggle-follow-btn').addEventListener('click', () => {
+    isFollowMode = !isFollowMode;
+    const btn = document.getElementById('toggle-follow-btn');
+    btn.innerHTML = isFollowMode
+      ? '<i data-lucide="locate"></i> Auto-Centre: ON'
+      : '<i data-lucide="crosshair"></i> Auto-Centre: OFF';
+    btn.className = isFollowMode ? 'btn btn-secondary' : 'btn btn-danger';
+    lucide.createIcons();
+  });
+
+  document.getElementById('satellite-btn').addEventListener('click', () => {
+    if (!map) { logToConsole('Map not loaded yet.', 'error'); return; }
+    isSatelliteMode = !isSatelliteMode;
+    const btn = document.getElementById('satellite-btn');
+    if (isSatelliteMode) {
+      map.setMapTypeId('hybrid');
+      btn.innerHTML = '<i data-lucide="map"></i> Road Map';
+      btn.style.background = 'linear-gradient(135deg,#0ea5e9,#0369a1)';
+      logToConsole('Switched to Satellite/Hybrid view.');
+    } else {
+      map.setMapTypeId('roadmap');
+      btn.innerHTML = '<i data-lucide="layers"></i> Satellite';
+      btn.style.background = 'linear-gradient(135deg,#6366f1,#4338ca)';
+      logToConsole('Switched to Dark Road Map.');
+    }
+    lucide.createIcons();
+  });
+
+  // Fit All Fleet — zoom map to show all active vehicles
+  document.getElementById('fit-fleet-btn').addEventListener('click', () => {
+    if (!map) { logToConsole('Map not loaded yet.', 'error'); return; }
+    const positions = Object.values(trackers)
+      .filter(tr => tr.currentLocation)
+      .map(tr => ({ lat: tr.currentLocation.lat, lng: tr.currentLocation.lng }));
+
+    if (positions.length === 0) {
+      map.setCenter(defaultCenter);
+      map.setZoom(15);
+      logToConsole('No vehicle positions. Centering on MUNPL plant.');
+      return;
+    }
+    if (positions.length === 1) {
+      map.setCenter(positions[0]);
+      map.setZoom(16);
+      return;
+    }
+    const bounds = new google.maps.LatLngBounds();
+    positions.forEach(p => bounds.extend(new google.maps.LatLng(p.lat, p.lng)));
+    map.fitBounds(bounds, { top: 60, right: 40, bottom: 40, left: 40 });
+    logToConsole(`Fitted map to show ${positions.length} vehicles.`);
+  });
+
+  document.getElementById('reset-route-btn').addEventListener('click', () => {
+    if (!selectedTrackerId) return;
+    const name = trackers[selectedTrackerId]?.deviceInfo?.device || 'selected vehicle';
+    if (confirm(`Clear route history for "${name}"?`)) {
+      if (socket?.connected) socket.emit('reset_route', selectedTrackerId);
+      logToConsole(`Route reset requested for ${name}.`);
+    }
+  });
+
+  // Export GeoJSON
+  document.getElementById('export-route-btn').addEventListener('click', () => {
+    if (!selectedTrackerId || !trackers[selectedTrackerId]) {
+      alert('Select an active vehicle first.'); return;
+    }
+    const tr = trackers[selectedTrackerId];
+    if (!tr.routeHistory?.length) { alert('No route history to export.'); return; }
+
+    const name = tr.deviceInfo?.device || `Vehicle-${selectedTrackerId.substring(0,5)}`;
+    const geojson = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: {
+          vehicleId: selectedTrackerId,
+          deviceName: name,
+          totalDistanceKm: tr.totalDistance,
+          maxSpeedKmh: tr.maxSpeed || 0,
+          waypointCount: tr.routeHistory.length,
+          exportedAt: new Date().toISOString(),
+          system: 'NTPC-MUNPL GPS Fleet Tracker'
+        },
+        geometry: {
+          type: 'LineString',
+          coordinates: tr.routeHistory.map(p => [p.lng, p.lat, p.speed || 0])
+        }
+      }]
+    };
+
+    const a = document.createElement('a');
+    a.href = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(geojson, null, 2));
+    a.download = `route_${name.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.geojson`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    logToConsole(`GeoJSON route exported for ${name} (${tr.routeHistory.length} waypoints).`, 'success');
+  });
+
+  // ── QR Code — dynamically selected based on network connection ─────────
+  async function initQRCode() {
+    try {
+      const info = await fetch(BACKEND_URL + '/api/server-info', { credentials: 'include' }).then(r => r.json());
+      const select = document.getElementById('qr-url-select');
+      if (!select) return;
+
+      select.innerHTML = '';
+      const options = [];
+
+      // 1. Local LAN IP
+      if (info.localTrackerUrl) {
+        options.push({
+          value: info.localTrackerUrl,
+          text: `Local Wi-Fi Network (${info.localIP}:${info.port})`
+        });
+      }
+
+      // 2. Public / Permanent IP
+      if (info.publicTrackerUrl && info.publicTrackerUrl !== info.localTrackerUrl) {
+        options.push({
+          value: info.publicTrackerUrl,
+          text: `Public/Permanent Server IP (${info.publicDashUrl.replace(/^https?:\/\//, '')})`
+        });
+      }
+
+      // 3. Browser Origin (the URL they are currently accessing the dashboard from)
+      const browserOriginUrl = `${window.location.origin}/tracker.html`;
+      const isAlreadyListed = options.some(o => o.value === browserOriginUrl);
+      if (!isAlreadyListed && !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1')) {
+        options.push({
+          value: browserOriginUrl,
+          text: `Current Domain Route (${window.location.host})`
+        });
+      }
+
+      options.forEach(opt => {
+        const el = document.createElement('option');
+        el.value = opt.value;
+        el.textContent = opt.text;
+        select.appendChild(el);
+      });
+
+      // Default value logic:
+      // If accessing via the public IP/domain, default to public URL. Otherwise default to Local LAN IP.
+      if (info.publicTrackerUrl && window.location.origin.includes(info.publicDashUrl)) {
+        select.value = info.publicTrackerUrl;
+      } else {
+        select.value = info.localTrackerUrl || browserOriginUrl;
+      }
+
+      function updateQR(url) {
+        const img = document.getElementById('qr-code-img');
+        const urlEl = document.getElementById('qr-tracker-url');
+        const downloadBtn = document.getElementById('download-qr-btn');
+
+        const qrSrc = `${BACKEND_URL}/api/qr-code?url=${encodeURIComponent(url)}`;
+        if (img) img.src = qrSrc;
+        if (urlEl) { urlEl.textContent = url; urlEl.href = url; }
+        if (downloadBtn) {
+          downloadBtn.href = qrSrc;
+        }
+
+        const link = document.getElementById('public-tracker-url-link');
+        if (link) { link.textContent = url; link.href = url; }
+      }
+
+      select.addEventListener('change', (e) => {
+        updateQR(e.target.value);
+        logToConsole(`Regenerated QR code for: ${e.target.value}`);
+      });
+
+      // Initial update
+      updateQR(select.value);
+      logToConsole(`Tracker URL QR Initialized: ${select.value}`, 'success');
+
+    } catch (e) {
+      logToConsole('Could not load server info or generate QR: ' + e.message, 'error');
+    }
+    lucide.createIcons();
+  }
+
+  // ── Simulator Engine ──────────────────────────────────────────────────────
+  let simInterval = null;
+
+  // Simulated loop route around NTPC-MUNPL plant roads (verified coordinates)
+  const plantRoute = [
+    { lat: 25.1453, lng: 81.9435, speed: 15, heading: 0   },
+    { lat: 25.1462, lng: 81.9428, speed: 25, heading: 345 },
+    { lat: 25.1471, lng: 81.9432, speed: 35, heading: 18  },
+    { lat: 25.1479, lng: 81.9443, speed: 40, heading: 55  },
+    { lat: 25.1482, lng: 81.9456, speed: 38, heading: 88  },
+    { lat: 25.1477, lng: 81.9468, speed: 32, heading: 115 },
+    { lat: 25.1466, lng: 81.9477, speed: 26, heading: 143 },
+    { lat: 25.1454, lng: 81.9480, speed: 20, heading: 175 },
+    { lat: 25.1442, lng: 81.9475, speed: 28, heading: 202 },
+    { lat: 25.1434, lng: 81.9462, speed: 35, heading: 238 },
+    { lat: 25.1431, lng: 81.9447, speed: 38, heading: 266 },
+    { lat: 25.1436, lng: 81.9434, speed: 30, heading: 302 },
+    { lat: 25.1445, lng: 81.9428, speed: 22, heading: 330 },
+  ];
+
+  document.getElementById('simulator-btn').addEventListener('click', () => {
+    const btn = document.getElementById('simulator-btn');
+    if (simInterval) {
+      clearInterval(simInterval);
+      simInterval = null;
+      btn.innerHTML = '<i data-lucide="play"></i> Start Plant Route Sim';
+      btn.style.background = 'linear-gradient(135deg,#a855f7,#7e22ce)';
+      logToConsole('Plant route simulation stopped.');
+      lucide.createIcons();
+    } else {
+      btn.innerHTML = '<i data-lucide="square"></i> Stop Plant Route Sim';
+      btn.style.background = 'var(--color-danger)';
+      lucide.createIcons();
+      logToConsole('Dual-vehicle simulation started — MUNPL plant route.');
+
+      let step1 = 0;
+      let step2 = Math.floor(plantRoute.length / 2);
+
+      simInterval = setInterval(() => {
+        if (!socket?.connected) return;
+        const p1 = plantRoute[step1];
+        const p2 = plantRoute[step2];
+        const j  = () => (Math.random() - 0.5) * 0.00012;
+
+        socket.emit('location_update', {
+          lat: p1.lat + j(), lng: p1.lng + j(),
+          accuracy: 7 + Math.random()*3, speed: p1.speed + (Math.random()-0.5)*3,
+          heading: p1.heading, altitude: 98.2,
+          timestamp: Date.now(),
+          deviceInfo: { id: 'SIM_DUMPER_01', device: 'Dumper-Truck-01', os: 'MUNPL ECU v1.2', battery: 95, isCharging: true }
+        });
+
+        socket.emit('location_update', {
+          lat: p2.lat + j(), lng: p2.lng + j(),
+          accuracy: 8 + Math.random()*3, speed: p2.speed + (Math.random()-0.5)*3,
+          heading: p2.heading, altitude: 101.4,
+          timestamp: Date.now(),
+          deviceInfo: { id: 'SIM_TANKER_02', device: 'Water-Tanker-02', os: 'MUNPL ECU v1.4', battery: 78, isCharging: false }
+        });
+
+        step1 = (step1 + 1) % plantRoute.length;
+        step2 = (step2 + 1) % plantRoute.length;
+      }, 2000);
+    }
+  });
+
+  // ── History Module ─────────────────────────────────────────────────────────
+  let histPolyline      = null;
+  let histStartMarker   = null;
+  let histEndMarker     = null;
+  let histLoadedData    = null;
+  let histLoadedDevId   = null;
+
+  window.setHistPreset = function(preset) {
+    const today = new Date();
+    const fmt   = d => d.toISOString().split('T')[0];
+    const fd    = document.getElementById('hist-from-date');
+    const td    = document.getElementById('hist-to-date');
+    if (!fd || !td) return;
+    switch (preset) {
+      case 'today':     fd.value = fmt(today); td.value = fmt(today); break;
+      case 'yesterday': { const y=new Date(today); y.setDate(y.getDate()-1); fd.value=fmt(y); td.value=fmt(y); } break;
+      case '7d':        { const s=new Date(today); s.setDate(s.getDate()-6); fd.value=fmt(s); td.value=fmt(today); } break;
+      case '30d':       { const s=new Date(today); s.setDate(s.getDate()-29); fd.value=fmt(s); td.value=fmt(today); } break;
+    }
+  };
+
+  window.openHistoryForVehicle = function(deviceId, name) {
+    const sel = document.getElementById('hist-vehicle-select');
+    if (sel) {
+      let found = false;
+      for (const opt of sel.options) { if (opt.value===deviceId) { found=true; sel.value=deviceId; break; } }
+      if (!found) { const o=new Option(name||deviceId, deviceId); sel.appendChild(o); sel.value=deviceId; }
+    }
+    setHistPreset('today');
+    document.getElementById('hist-vehicle-select')?.scrollIntoView({ behavior:'smooth', block:'center' });
+    logToConsole(`History panel opened for ${name||deviceId}.`);
+  };
+
+  function refreshHistoryVehicleDropdown() {
+    const sel = document.getElementById('hist-vehicle-select');
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Select a vehicle...</option>';
+    Object.keys(trackers).forEach(id => {
+      const n = trackers[id]?.deviceInfo?.device || `Device-${id.substring(0,6)}`;
+      sel.appendChild(new Option(n, id));
+    });
+    if (current && trackers[current]) sel.value = current;
+  }
+
+  function clearHistoryRoute() {
+    if (histPolyline)    { histPolyline.setMap(null);    histPolyline    = null; }
+    if (histStartMarker) { histStartMarker.setMap(null); histStartMarker = null; }
+    if (histEndMarker)   { histEndMarker.setMap(null);   histEndMarker   = null; }
+    histLoadedData  = null;
+    histLoadedDevId = null;
+    const statsEl   = document.getElementById('hist-stats');
+    const actionsEl = document.getElementById('hist-actions');
+    const clearBtn  = document.getElementById('clear-history-btn');
+    if (statsEl)   statsEl.style.display   = 'none';
+    if (actionsEl) actionsEl.style.display = 'none';
+    if (clearBtn)  clearBtn.style.display  = 'none';
+    
+    const tableContainer = document.getElementById('hist-table-container');
+    const tableBody = document.getElementById('hist-table-body');
+    if (tableContainer) tableContainer.style.display = 'none';
+    if (tableBody) tableBody.innerHTML = '';
+    
+    logToConsole('History view cleared.');
+  }
+
+  async function loadHistoryRoute() {
+    const vehicleId = document.getElementById('hist-vehicle-select')?.value;
+    const fromDate  = document.getElementById('hist-from-date')?.value;
+    const toDate    = document.getElementById('hist-to-date')?.value;
+    if (!vehicleId) { showToast('No Vehicle', 'Please select a vehicle.', 'warning'); return; }
+    if (!fromDate || !toDate) { showToast('No Date', 'Please select a date range.', 'warning'); return; }
+
+    const btn = document.getElementById('load-history-btn');
+    btn.innerHTML = '<i data-lucide="loader" style="width:13px;height:13px;animation:spin 1s linear infinite;"></i> Loading…';
+    btn.disabled  = true;
+    lucide.createIcons();
+
+    try {
+      const from = new Date(fromDate + 'T00:00:00').getTime();
+      const to   = new Date(toDate   + 'T23:59:59').getTime();
+      const resp = await fetch(`${BACKEND_URL}/api/history/${encodeURIComponent(vehicleId)}?from=${from}&to=${to}`, { credentials: 'include' });
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+
+      clearHistoryRoute();
+
+      if (!data.points || data.points.length < 2) {
+        showToast('No Data', 'No location records found for this vehicle in the selected range.', 'info');
+        return;
+      }
+
+      histLoadedData  = data;
+      histLoadedDevId = vehicleId;
+
+      if (map && window.google?.maps) {
+        try {
+          const path = data.points.map(p => new google.maps.LatLng(p.lat, p.lng));
+
+          histPolyline = new google.maps.Polyline({
+            path, geodesic: true,
+            strokeColor: getVehicleColor(vehicleId), strokeOpacity: 0.9, strokeWeight: 4,
+            map, zIndex: 15
+          });
+
+          const dotIcon = (color) => ({
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 7, fillColor: color, fillOpacity: 1,
+            strokeColor: '#fff', strokeWeight: 2
+          });
+          const s = data.points[0];
+          const e = data.points[data.points.length - 1];
+          histStartMarker = new google.maps.Marker({ position:{lat:s.lat,lng:s.lng}, map, icon:dotIcon('#10b981'), title:`Start: ${new Date(s.timestamp).toLocaleString()}`, zIndex:25 });
+          histEndMarker   = new google.maps.Marker({ position:{lat:e.lat,lng:e.lng}, map, icon:dotIcon('#ef4444'), title:`End: ${new Date(e.timestamp).toLocaleString()}`, zIndex:25 });
+
+          const bounds = new google.maps.LatLngBounds();
+          path.forEach(p => bounds.extend(p));
+          map.fitBounds(bounds, { top:60, right:40, bottom:40, left:40 });
+        } catch (mapErr) {
+          console.warn("History map rendering failed:", mapErr);
+        }
+      }
+
+      // Stats
+      const st = data.stats;
+      document.getElementById('hist-stat-dist').textContent  = `${st.totalDistanceKm} km`;
+      document.getElementById('hist-stat-speed').textContent = `${st.maxSpeedKmh} km/h`;
+      const h=Math.floor(st.durationMs/3600000), m=Math.floor((st.durationMs%3600000)/60000);
+      document.getElementById('hist-stat-dur').textContent  = h>0 ? `${h}h ${m}m` : `${m}m`;
+      document.getElementById('hist-stat-wpts').textContent = data.count;
+
+      document.getElementById('hist-stats').style.display   = 'block';
+      document.getElementById('hist-actions').style.display = 'grid';
+      document.getElementById('clear-history-btn').style.display = 'block';
+      
+      const histTableContainer = document.getElementById('hist-table-container');
+      if (histTableContainer) histTableContainer.style.display = 'block';
+      
+      const toggleBtn = document.getElementById('toggle-hist-table-btn');
+      const tableWrapper = document.getElementById('hist-table-wrapper');
+      if (toggleBtn && tableWrapper) {
+        toggleBtn.innerHTML = '<i data-lucide="table" style="width:12px; height:12px;"></i> Show Detailed Logs';
+        tableWrapper.style.display = 'none';
+      }
+      
+      const tableBody = document.getElementById('hist-table-body');
+      if (tableBody) {
+        tableBody.innerHTML = '';
+        const maxDisplayPoints = Math.min(data.points.length, 200);
+        for (let i = 0; i < maxDisplayPoints; i++) {
+          const p = data.points[i];
+          const timeStr = new Date(p.timestamp).toLocaleTimeString();
+          const coordsStr = `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`;
+          const landmarkStr = p.nearest_landmark || '—';
+          const speedStr = `${(p.speed || 0).toFixed(1)} km/h`;
+          
+          const tr = document.createElement('tr');
+          tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+          tr.innerHTML = `
+            <td style="padding:5px 8px; font-family:monospace; white-space:nowrap;">${timeStr}</td>
+            <td style="padding:5px 8px; font-family:monospace; white-space:nowrap;">${coordsStr}</td>
+            <td style="padding:5px 8px; color:var(--text-primary); font-weight:500;">${landmarkStr}</td>
+            <td style="padding:5px 8px;">${speedStr}</td>
+          `;
+          tableBody.appendChild(tr);
+        }
+        if (data.points.length > 200) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td colspan="4" style="padding:6px; text-align:center; color:var(--text-muted); font-style:italic;">
+              Showing first 200 of ${data.points.length} points. Export to view all.
+            </td>
+          `;
+          tableBody.appendChild(tr);
+        }
+      }
+      
+      lucide.createIcons();
+
+      const vName = trackers[vehicleId]?.deviceInfo?.device || vehicleId;
+      showToast('History Loaded', `${data.count} waypoints · ${st.totalDistanceKm} km`, 'success');
+      logToConsole(`History: ${vName} — ${data.count} pts, ${st.totalDistanceKm} km, ${st.maxSpeedKmh} km/h max.`, 'success');
+    } catch (err) {
+      showToast('Load Error', err.message, 'danger');
+      logToConsole(`History error: ${err.message}`, 'error');
+    } finally {
+      btn.innerHTML = '<i data-lucide="route"></i> Load Route';
+      btn.disabled  = false;
+      lucide.createIcons();
+    }
+  }
+
+  function exportHistoryGeoJSON() {
+    if (!histLoadedDevId) return;
+    const from = new Date(document.getElementById('hist-from-date').value+'T00:00:00').getTime();
+    const to   = new Date(document.getElementById('hist-to-date').value  +'T23:59:59').getTime();
+    window.open(`${BACKEND_URL || window.location.origin}/api/history/${encodeURIComponent(histLoadedDevId)}/export?from=${from}&to=${to}&format=geojson`, '_blank');
+  }
+
+  function exportHistoryCSV() {
+    if (!histLoadedDevId) return;
+    const from = new Date(document.getElementById('hist-from-date').value+'T00:00:00').getTime();
+    const to   = new Date(document.getElementById('hist-to-date').value  +'T23:59:59').getTime();
+    window.open(`${BACKEND_URL || window.location.origin}/api/history/${encodeURIComponent(histLoadedDevId)}/export?from=${from}&to=${to}&format=csv`, '_blank');
+  }
+
+  async function refreshDbStats() {
+    try {
+      const d = await fetch(BACKEND_URL + '/api/db-stats', { credentials: 'include' }).then(r => r.json());
+      if (!d.available) {
+        const el = document.getElementById('db-unavailable');
+        if (el) el.style.display = 'flex';
+        return;
+      }
+      const fmt = n => n>=1e6?(n/1e6).toFixed(1)+'M':n>=1000?(n/1000).toFixed(1)+'K':String(n);
+      const fmtB = b => b>=1048576?(b/1048576).toFixed(1)+' MB':b>=1024?(b/1024).toFixed(1)+' KB':b+' B';
+      document.getElementById('db-stat-points').textContent  = fmt(d.total_points  || 0);
+      document.getElementById('db-stat-devices').textContent = fmt(d.total_devices || 0);
+      document.getElementById('db-stat-alerts').textContent  = fmt(d.total_alerts  || 0);
+      document.getElementById('db-stat-size').textContent    = fmtB(d.size_bytes   || 0);
+    } catch (_) { /* silent */ }
+  }
+
+  // History event listeners
+  document.getElementById('load-history-btn')?.addEventListener('click', loadHistoryRoute);
+  document.getElementById('clear-history-btn')?.addEventListener('click', clearHistoryRoute);
+  document.getElementById('hist-export-geojson')?.addEventListener('click', exportHistoryGeoJSON);
+  document.getElementById('hist-export-csv')?.addEventListener('click', exportHistoryCSV);
+  document.getElementById('toggle-hist-table-btn')?.addEventListener('click', () => {
+    const wrapper = document.getElementById('hist-table-wrapper');
+    const btn = document.getElementById('toggle-hist-table-btn');
+    if (!wrapper || !btn) return;
+    if (wrapper.style.display === 'none') {
+      wrapper.style.display = 'block';
+      btn.innerHTML = '<i data-lucide="eye-off" style="width:12px; height:12px;"></i> Hide Detailed Logs';
+    } else {
+      wrapper.style.display = 'none';
+      btn.innerHTML = '<i data-lucide="table" style="width:12px; height:12px;"></i> Show Detailed Logs';
+    }
+    lucide.createIcons();
+  });
+  setHistPreset('today');
+  refreshDbStats();
+  setInterval(refreshDbStats, 30000);
+
+  // ── Initialise ────────────────────────────────────────────────────────────
+  checkConfig();
+  if (typeof io !== 'undefined') {
+    connectSocket();
+  } else if (window.socketScript) {
+    window.socketScript.onload = connectSocket;
+  }
+  initQRCode();
+</script>
+
+</body>
+</html>

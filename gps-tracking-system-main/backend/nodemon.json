@@ -1,0 +1,15 @@
+{
+  "watch": ["server.js"],
+  "ext": "js",
+  "ignore": [
+    ".env",
+    "public/**",
+    "node_modules/**",
+    "data/**",
+    "*.log"
+  ],
+  "delay": "500",
+  "env": {
+    "NODE_ENV": "development"
+  }
+}

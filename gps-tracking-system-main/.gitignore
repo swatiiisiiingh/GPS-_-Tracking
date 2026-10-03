@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Environment files (contain secrets — NEVER commit these)
+.env
+.env.local
+.env.*.local
+
+# Generated database
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# PM2 / runtime logs
+logs/
+*.log
+npm-debug.log*
+
+# Generated QR code (re-generated on startup)
+public/tracker-qr.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
